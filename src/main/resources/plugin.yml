@@ -1,0 +1,58 @@
+name: vEnderchest
+version: "${version}"
+main: com.valerin.venderchest.VEnderchest
+api-version: '1.21'
+author: Valerin
+description: Enderchest extendido multi-página
+
+softdepend:
+  - PlaceholderAPI
+
+commands:
+  ec:
+    description: Abre tu enderchest extendido
+    usage: /ec [página]
+    aliases: [enderchest]
+    permission: venderchest.use
+  ecadmin:
+    description: Administración de enderchests
+    usage: /ecadmin <view|clear|reload> [jugador] [página]
+    permission: venderchest.admin
+
+permissions:
+  venderchest.use:
+    description: Acceso básico al enderchest extendido
+    default: true
+  venderchest.bypass:
+    description: Abre el enderchest vanilla real ignorando vEnderchest
+    default: op
+  venderchest.admin:
+    description: Comandos de administración /ecadmin
+    default: op
+  venderchest.pages.1:
+    description: 1 página de enderchest
+    default: true
+  venderchest.pages.2:
+    description: 2 páginas de enderchest
+    default: false
+  venderchest.pages.3:
+    description: 3 páginas de enderchest
+    default: false
+  venderchest.pages.4:
+    description: 4 páginas de enderchest
+    default: false
+  venderchest.pages.5:
+    description: 5 páginas de enderchest
+    default: false
+  venderchest.pages.6:
+    description: 6 páginas de enderchest
+    default: false
+  venderchest.pages.7:
+    description: 7 páginas de enderchest
+    default: false
+  venderchest.pages.8:
+    description: 8 páginas de enderchest
+    default: false
+  venderchest.pages.9:
+    description: 9 páginas de enderchest
+    default: false

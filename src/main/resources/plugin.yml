@@ -27,8 +27,17 @@ permissions:
     description: Abre el enderchest vanilla real ignorando vEnderchest
     default: op
   venderchest.admin:
-    description: Comandos de administración /ecadmin
+    description: Todos los comandos de administración /ecadmin (implica view y edit)
     default: op
+    children:
+      venderchest.admin.view: true
+      venderchest.admin.edit: true
+  venderchest.admin.view:
+    description: Ver vaults de cualquier jugador (solo lectura)
+    default: false
+  venderchest.admin.edit:
+    description: Ver y editar vaults de cualquier jugador
+    default: false
   venderchest.pages.1:
     description: 1 página de enderchest
     default: true

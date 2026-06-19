@@ -12,6 +12,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 abstract class AbstractJdbcStorage implements Storage {
@@ -31,6 +33,19 @@ abstract class AbstractJdbcStorage implements Storage {
                     page TINYINT NOT NULL,
                     data TEXT NOT NULL,
                     PRIMARY KEY (uuid, page)
+                )
+                """);
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS ec_extra (
+                    uuid VARCHAR(36) PRIMARY KEY,
+                    extra INTEGER NOT NULL DEFAULT 0
+                )
+                """);
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS ec_migrated (
+                    uuid VARCHAR(36) NOT NULL,
+                    type VARCHAR(32) NOT NULL,
+                    PRIMARY KEY (uuid, type)
                 )
                 """);
         }
@@ -99,6 +114,95 @@ abstract class AbstractJdbcStorage implements Storage {
             e.printStackTrace();
         }
         return 0;
+    }
+
+    @Override
+    public Map<Integer, Integer> countPageItems(UUID uuid) {
+        Map<Integer, Integer> result = new HashMap<>();
+        String sql = "SELECT page, data FROM ec_pages WHERE uuid = ?";
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, uuid.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    JsonArray arr = GSON.fromJson(rs.getString("data"), JsonArray.class);
+                    int count = 0;
+                    for (JsonElement el : arr) if (!el.isJsonNull()) count++;
+                    result.put(rs.getInt("page"), count);
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return result;
+    }
+
+    @Override
+    public int getExtraPages(UUID uuid) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT extra FROM ec_extra WHERE uuid = ?")) {
+            ps.setString(1, uuid.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return rs.getInt(1);
+            }
+        } catch (SQLException e) { e.printStackTrace(); }
+        return 0;
+    }
+
+    @Override
+    public void addExtraPages(UUID uuid, int amount) {
+        setExtraPages(uuid, Math.max(0, getExtraPages(uuid) + amount));
+    }
+
+    @Override
+    public void removeExtraPages(UUID uuid, int amount) {
+        setExtraPages(uuid, Math.max(0, getExtraPages(uuid) - amount));
+    }
+
+    @Override
+    public void setExtraPages(UUID uuid, int amount) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "INSERT OR REPLACE INTO ec_extra (uuid, extra) VALUES (?, ?)")) {
+            ps.setString(1, uuid.toString());
+            ps.setInt(2, Math.max(0, amount));
+            ps.executeUpdate();
+        } catch (SQLException e) { e.printStackTrace(); }
+    }
+
+    @Override
+    public boolean isMigrated(UUID uuid, String type) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT 1 FROM ec_migrated WHERE uuid = ? AND type = ?")) {
+            ps.setString(1, uuid.toString());
+            ps.setString(2, type);
+            try (ResultSet rs = ps.executeQuery()) { return rs.next(); }
+        } catch (SQLException e) { e.printStackTrace(); }
+        return false;
+    }
+
+    @Override
+    public void markMigrated(UUID uuid, String type) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "INSERT OR IGNORE INTO ec_migrated (uuid, type) VALUES (?, ?)")) {
+            ps.setString(1, uuid.toString());
+            ps.setString(2, type);
+            ps.executeUpdate();
+        } catch (SQLException e) { e.printStackTrace(); }
+    }
+
+    @Override
+    public void unmarkMigrated(UUID uuid, String type) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "DELETE FROM ec_migrated WHERE uuid = ? AND type = ?")) {
+            ps.setString(1, uuid.toString());
+            ps.setString(2, type);
+            ps.executeUpdate();
+        } catch (SQLException e) { e.printStackTrace(); }
     }
 
     @Override

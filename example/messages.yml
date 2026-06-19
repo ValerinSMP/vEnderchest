@@ -1,0 +1,125 @@
+# DOCUMENTACIÓN: https://docs.artillex-studios.com/axvaults.html
+# CONSTRUCTOR DE OBJETOS: https://docs.artillex-studios.com/item-builder.html
+
+help:
+- <gradient:#55ff00:#AAFF00><b>AxVaults</b></gradient> <#88FF88>Ayuda
+- ' <#88FF88>➤ <white>/axvaults <#DDDDDD>| <#AAFFAA>Abrir selector de bóvedas'
+- ' <#88FF88>➤ <white>/axvaults <number> <#DDDDDD>| <#AAFFAA>Abrir bóveda'
+- ' <#88FF88>➤ <white>/axvaultsadmin view <player> <vault> <#DDDDDD>| <#AAFFAA>Abrir bóveda de otro jugador'
+- ' <#88FF88>➤ <white>/axvaultsadmin forceopen <player> <#DDDDDD>| <#AAFFAA>Abrir selector de bóvedas al jugador'
+- ' <#88FF88>➤ <white>/axvaultsadmin set [number] <#DDDDDD>| <#AAFFAA>Añadir bóveda al bloque'
+- ' <#88FF88>➤ <white>/axvaultsadmin reload <#DDDDDD>| <#AAFFAA>Recargar configuración'
+- ' <#88FF88>➤ <white>/axvaultsadmin delete <player> <vault> <#DDDDDD>| <#AAFFAA>Eliminar bóveda del jugador'
+- ' <#88FF88>➤ <white>/axvaultsadmin stats <#DDDDDD>| <#AAFFAA>Estadísticas del servidor'
+- ' <#88FF88>➤ <white>/axvaultsadmin converter <plugin> <#DDDDDD>| <#AAFFAA>Convertir desde otro plugin'
+- ' <#88FF88>➤ <white>/axvaultsadmin save <#DDDDDD>| <#AAFFAA>Guardar manualmente todas las bóvedas cargadas'
+- ' <#88FF88>➤ <white>/axvaultsadmin debug <#DDDDDD>| <#AAFFAA>Imprimir información útil en consola'
+- ' '
+
+guis:
+  selector:
+    title: '&0Mis Bóvedas'
+    item-owned:
+      # los jugadores pueden cambiar el material si tienen permisos, este es el valor predeterminado
+      material: BARREL
+      name: '&#55ff00&lBóveda #%num%'
+      glow: false
+      lore:
+      - ' '
+      - ' &7- &fRanuras: &#aaffaa%used%&7/&#55ff00%max%'
+      - ' '
+      - '&#55ff00&l(!) &#55ff00Clic - Abrir Bóveda'
+      - '&#55ff00&l(!) &#55ff00Mayús + Clic - Cambiar Objeto'
+    item-locked:
+      material: RED_STAINED_GLASS_PANE
+      name: '&#FF0000&lBóveda #%num%'
+      glow: false
+      lore:
+      - ' '
+      - ' &7- &f¡Aún &#FF0000no has desbloqueado &festa bóveda!'
+      - ' '
+      - '&#FF0000&l(!) &#FF0000Bóveda Bloqueada'
+  item-picker:
+    title: '&0Selector de Objetos'
+  vault:
+    title: '&0Bóveda #%num%'
+
+gui-items:
+  close:
+    material: BARRIER
+    name: '&#FF3333&lᴄᴇʀʀᴀʀ'
+  back:
+    material: BARRIER
+    name: '&#FF3333&lᴠᴏʟᴠᴇʀ'
+  previous-page:
+    material: ARROW
+    name: '&#FF6600&lᴘáɢɪɴᴀ ᴀɴᴛᴇʀɪᴏʀ'
+  next-page:
+    material: ARROW
+    name: '&#FFCC00&lᴘáɢɪɴᴀ ꜱɪɢᴜɪᴇɴᴛᴇ'
+
+# puedes desactivar cualquier mensaje configurándolo como ""
+vault:
+  not-unlocked: '&#FF0000¡No posees esta bóveda!'
+  opened: '&f¡Bóveda &#55FF00#%num% &fabierta!'
+  closed: '&f¡Bóveda &#55FF00#%num% &fcerrada!'
+
+reload:
+  success: '&#33FF33¡Plugin recargado exitosamente!'
+  failed: '&#FF3333¡Error al recargar el plugin! Algo está mal en el archivo &f%file%&#FF3333, revisa la consola o usa un validador YAML para corregir los errores!'
+
+set:
+  success: '&#00FF00¡Has añadido exitosamente la bóveda a este bloque!'
+  already: '&#FF0000¡Este bloque ya tiene una bóveda!'
+  no-block: '&#FF0000¡Debes mirar hacia un bloque!'
+  removed: '&#FF0000¡Has removido la bóveda de este bloque!'
+
+save:
+  manual: '&#00FF00¡Bóvedas guardadas manualmente en &f%time%ms&#00FF00! &#DDDDDD(este comando está destinado para pruebas y puede causar lag innecesario)'
+
+no-permission: '&#FF0000¡No tienes permisos para usar esto!'
+force-open: '&#00FF00¡Selector de bóvedas abierto para &f%player%&#55FF00!'
+force-open-vault: '&#00FF00¡Abriendo bóveda &f#%num% &#00FF00para &f%player%&#55FF00!'
+delete: '&f¡Bóveda &#FF0000#%num% &fde &#FF0000%player% &feliminada!'
+banned-item: '&#FF0000¡No puedes poner este objeto en las bóvedas!'
+
+view:
+  open: '&f¡Bóveda &#55FF00#%num% &fde &#55FF00%player% &fabierta!'
+  info: '&fBóvedas de &#55FF00%player%&f: &#AAFFAA%vaults%'
+  not-found: '&#FF0000¡No se puede encontrar el jugador o la bóveda!'
+
+# puedes desactivar los sonidos configurando las secciones como ""
+# por ejemplo: open: ""
+# lista de sonidos: https://www.digminecraft.com/lists/sound_list_pc.php
+# formato: <sonido>|[volumen]|[tono] (volumen y tono son opcionales)
+sounds:
+  open: block.barrel.open|1.0|1.0
+  close: block.barrel.close|1.0|1.0
+  select-icon: block.barrel.close|1.0|1.0
+
+stats:
+- ' '
+- '&#55ff00&lAxVaults &#aaff55Estadísticas del Servidor &7»'
+- ' &7- &fJugadores cargados: &#55ff00%players%'
+- ' &7- &fBóvedas cargadas: &#55ff00%vaults%/%vaults2%'
+- ' &7- &fDuración último autoguardado: &#55ff00%auto-save% ms'
+- ' &7- &fÚltimo autoguardado guardó: &#55ff00%saved-vaults% bóvedas'
+- ' '
+
+converter:
+  started: '&#55FF00¡El convertidor ha iniciado! ¡Revisa la consola para ver el estado actual!'
+
+commands:
+  invalid-value: '&#FF0000Parámetro inválido: &#BB0000%value%'
+  invalid-command: '&#FF0000¡Comando o subcomando inválido!'
+  missing-argument: '&#FF0000¡Argumento faltante! Debes especificar un valor para &#BB0000%value%&#FF0000.'
+  no-permission: '&#FF0000¡No tienes permisos para acceder a este comando!'
+  out-of-range: '&#FF0000¡El &#BB0000%number% &#FF0000debe estar entre &#BB0000%min% &#FF0000y &#BB0000%max%&#FF0000!'
+  player-only: '&#FF0000¡Debes ser un jugador para usar este comando!'
+  invalid-player: '&#FF0000¡El jugador &#BB0000%player% &#FF0000no puede ser encontrado!'
+  invalid-selector: '&#FF0000¡No puedes usar este selector en este comando!'
+
+update-notifier: '&#BBFF88¡Hay una nueva versión de AxVaults disponible! &#DDDDDD(&#FFFFFFactual: &#FF0000%current% &#DDDDDD| &#FFFFFFúltima: &#00FF00%latest%&#DDDDDD)'
+
+# no cambies esto
+version: 10

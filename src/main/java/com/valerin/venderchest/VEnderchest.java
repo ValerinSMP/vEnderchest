@@ -7,6 +7,8 @@ import com.valerin.venderchest.gui.GuiManager;
 import com.valerin.venderchest.hook.PlaceholderHook;
 import com.valerin.venderchest.listener.GuiListener;
 import com.valerin.venderchest.listener.InterceptListener;
+import com.valerin.venderchest.listener.PlayerJoinListener;
+import com.valerin.venderchest.migration.MigrationManager;
 import com.valerin.venderchest.storage.MysqlStorage;
 import com.valerin.venderchest.storage.SqliteStorage;
 import com.valerin.venderchest.storage.Storage;
@@ -18,9 +20,10 @@ public final class VEnderchest extends JavaPlugin {
 
     private static VEnderchest instance;
 
-    private ConfigManager configManager;
-    private Storage storage;
-    private GuiManager guiManager;
+    private ConfigManager    configManager;
+    private Storage          storage;
+    private GuiManager       guiManager;
+    private MigrationManager migrationManager;
 
     @Override
     public void onEnable() {
@@ -34,6 +37,7 @@ public final class VEnderchest extends JavaPlugin {
                 default -> new SqliteStorage(configManager, getDataFolder());
             };
             storage.init();
+            configManager.setStorage(storage);
         } catch (SQLException e) {
             getLogger().severe("Database init failed: " + e.getMessage());
             getServer().getPluginManager().disablePlugin(this);
@@ -42,8 +46,11 @@ public final class VEnderchest extends JavaPlugin {
 
         guiManager = new GuiManager(this, storage, configManager);
 
+        migrationManager = new MigrationManager(storage, getDataFolder(), configManager.getMaxPages(), getLogger());
+
         getServer().getPluginManager().registerEvents(new InterceptListener(guiManager), this);
         getServer().getPluginManager().registerEvents(new GuiListener(guiManager, configManager), this);
+        getServer().getPluginManager().registerEvents(new PlayerJoinListener(this, migrationManager), this);
 
         var ecCmd = getCommand("ec");
         if (ecCmd != null) {
@@ -54,7 +61,7 @@ public final class VEnderchest extends JavaPlugin {
 
         var ecAdminCmd = getCommand("ecadmin");
         if (ecAdminCmd != null) {
-            var executor = new EcAdminCommand(guiManager, storage, configManager);
+            var executor = new EcAdminCommand(this, guiManager, storage, configManager);
             ecAdminCmd.setExecutor(executor);
             ecAdminCmd.setTabCompleter(executor);
         }
@@ -73,13 +80,20 @@ public final class VEnderchest extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (migrationManager != null) migrationManager.close();
         if (guiManager != null) guiManager.saveAllDirty();
         if (storage != null) storage.close();
         getLogger().info("vEnderchest disabled.");
     }
 
+    public void reload() {
+        guiManager.closeAll();   // save dirty + close open GUIs
+        configManager.reload();  // reload all YMLs
+    }
+
     public static VEnderchest getInstance() { return instance; }
-    public ConfigManager getConfigManager() { return configManager; }
-    public GuiManager getGuiManager() { return guiManager; }
-    public Storage getStorage() { return storage; }
+    public ConfigManager    getConfigManager()    { return configManager; }
+    public GuiManager       getGuiManager()       { return guiManager; }
+    public Storage          getStorage()          { return storage; }
+    public MigrationManager getMigrationManager() { return migrationManager; }
 }

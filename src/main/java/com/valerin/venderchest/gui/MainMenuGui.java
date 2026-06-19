@@ -22,7 +22,7 @@ public class MainMenuGui {
         this.config = config;
     }
 
-    public Inventory build(Player player) {
+    public Inventory build(Player player, java.util.Map<Integer, Integer> itemCounts) {
         FileConfiguration cfg = config.getGuiMain();
         int rows = cfg.getInt("rows", 3);
         Component title = config.getMM().deserialize(cfg.getString("title", "vEnderchest"));
@@ -54,12 +54,19 @@ public class MainMenuGui {
             int slot = pageSlots.get(i);
             if (slot < 0 || slot >= rows * 9) continue;
             int pageNum = i + 1;
+            int items = itemCounts.getOrDefault(pageNum, 0);
             inv.setItem(slot, pageNum <= maxPages
-                    ? buildPageItem(cfg, pageNum, true)
-                    : buildPageItem(cfg, pageNum, false));
+                    ? buildPageItem(cfg, pageNum, true, items)
+                    : buildPageItem(cfg, pageNum, false, items));
         }
 
         return inv;
+    }
+
+    private String replacePlaceholders(String s, int page, int items) {
+        return s.replace("{page}", String.valueOf(page))
+                .replace("{items}", String.valueOf(items))
+                .replace("{max_items}", "45");
     }
 
     /** Parses a list of slot entries — each can be "N" or "N-M" range. */
@@ -87,7 +94,7 @@ public class MainMenuGui {
         return sec != null ? sec.getStringList("slots") : List.of();
     }
 
-    private ItemStack buildPageItem(FileConfiguration cfg, int page, boolean available) {
+    private ItemStack buildPageItem(FileConfiguration cfg, int page, boolean available, int items) {
         String path = available ? "page-item.available" : "page-item.locked";
         ConfigurationSection sec = cfg.getConfigurationSection(path);
 
@@ -102,14 +109,14 @@ public class MainMenuGui {
         if (meta == null) return item;
 
         if (sec != null) {
-            String nameRaw = sec.getString("name", "Página " + page).replace("{page}", String.valueOf(page));
+            String nameRaw = replacePlaceholders(sec.getString("name", "Página " + page), page, items);
             meta.displayName(config.parse(nameRaw));
 
             List<String> loreRaw = sec.getStringList("lore");
             if (!loreRaw.isEmpty()) {
                 List<Component> lore = new ArrayList<>();
                 for (String line : loreRaw)
-                    lore.add(config.parse(line.replace("{page}", String.valueOf(page))));
+                    lore.add(config.parse(replacePlaceholders(line, page, items)));
                 meta.lore(lore);
             }
         }

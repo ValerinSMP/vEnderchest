@@ -25,10 +25,15 @@ public class EnderchestGui {
     }
 
     public Inventory build(ItemStack[] content, int page, int maxPages) {
+        return build(content, page, maxPages, null);
+    }
+
+    public Inventory build(ItemStack[] content, int page, int maxPages, String titleOverride) {
         FileConfiguration cfg = config.getGuiEnderchest();
-        String titleRaw = cfg.getString("title", "Enderchest ({page}/{max})")
-                .replace("{page}", String.valueOf(page))
-                .replace("{max}", String.valueOf(maxPages));
+        String titleRaw = titleOverride != null ? titleOverride
+                : cfg.getString("title", "Enderchest ({page}/{max})")
+                        .replace("{page}", String.valueOf(page))
+                        .replace("{max}", String.valueOf(maxPages));
         Component title = config.getMM().deserialize(titleRaw);
 
         Inventory inv = Bukkit.createInventory(null, 54, title);

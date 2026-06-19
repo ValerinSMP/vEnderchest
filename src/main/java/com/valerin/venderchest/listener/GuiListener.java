@@ -12,6 +12,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryCreativeEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -63,6 +64,7 @@ public class GuiListener implements Listener {
 
             int maxPages = config.getMaxPages(player);
             if (page > maxPages) {
+                config.playSound(player, "denied");
                 player.sendMessage(config.msg("page-locked",
                         Placeholder.unparsed("page", String.valueOf(page))));
                 return;
@@ -82,12 +84,14 @@ public class GuiListener implements Listener {
 
         // Shift-click from player inventory into top → could land in nav row
         if (!clickedTop && event.getAction() == InventoryAction.MOVE_TO_OTHER_INVENTORY) {
-            if (session.isAdminView()) { event.setCancelled(true); return; }
-            ItemStack moved = event.getCurrentItem();
-            if (moved != null && config.isBlacklisted(moved.getType())) {
-                event.setCancelled(true);
-                player.sendMessage(config.msg("item-blacklisted"));
-                return;
+            if (session.isReadOnly()) { event.setCancelled(true); return; }
+            if (!session.isAdminView()) {
+                ItemStack moved = event.getCurrentItem();
+                if (moved != null && config.isBlacklisted(moved.getType())) {
+                    event.setCancelled(true);
+                    player.sendMessage(config.msg("item-blacklisted"));
+                    return;
+                }
             }
             session.markDirty();
             return;
@@ -97,29 +101,32 @@ public class GuiListener implements Listener {
         if (!clickedTop) return;
 
         // Content area (slots 0-44)
-        if (session.isAdminView()) {
+        if (session.isReadOnly()) {
             event.setCancelled(true);
             return;
         }
 
-        // Blacklist check on cursor being placed
-        ItemStack cursor = event.getCursor();
-        if (cursor != null && !cursor.getType().isAir() && config.isBlacklisted(cursor.getType())) {
-            event.setCancelled(true);
-            player.sendMessage(config.msg("item-blacklisted"));
-            return;
-        }
+        // Blacklist check only for regular players; admins bypass it
+        if (!session.isAdminView()) {
+            ItemStack cursor = event.getCursor();
+            if (cursor != null && !cursor.getType().isAir() && config.isBlacklisted(cursor.getType())) {
+                event.setCancelled(true);
+                config.playSound(player, "denied");
+                player.sendMessage(config.msg("item-blacklisted"));
+                return;
+            }
 
-        // Hotbar swap (F key) with blacklisted item
-        if (event.getAction() == InventoryAction.HOTBAR_SWAP
-                || event.getAction() == InventoryAction.HOTBAR_MOVE_AND_READD) {
-            int hotbarSlot = event.getHotbarButton();
-            if (hotbarSlot >= 0) {
-                ItemStack hotbarItem = player.getInventory().getItem(hotbarSlot);
-                if (hotbarItem != null && config.isBlacklisted(hotbarItem.getType())) {
-                    event.setCancelled(true);
-                    player.sendMessage(config.msg("item-blacklisted"));
-                    return;
+            if (event.getAction() == InventoryAction.HOTBAR_SWAP
+                    || event.getAction() == InventoryAction.HOTBAR_MOVE_AND_READD) {
+                int hotbarSlot = event.getHotbarButton();
+                if (hotbarSlot >= 0) {
+                    ItemStack hotbarItem = player.getInventory().getItem(hotbarSlot);
+                    if (hotbarItem != null && config.isBlacklisted(hotbarItem.getType())) {
+                        event.setCancelled(true);
+                        config.playSound(player, "denied");
+                        player.sendMessage(config.msg("item-blacklisted"));
+                        return;
+                    }
                 }
             }
         }
@@ -157,13 +164,14 @@ public class GuiListener implements Listener {
             }
         }
 
-        if (session.isAdminView()) {
+        if (session.isReadOnly()) {
             event.setCancelled(true);
             return;
         }
 
-        if (config.isBlacklisted(event.getOldCursor().getType())) {
+        if (!session.isAdminView() && config.isBlacklisted(event.getOldCursor().getType())) {
             event.setCancelled(true);
+            config.playSound(player, "denied");
             player.sendMessage(config.msg("item-blacklisted"));
             return;
         }
@@ -171,9 +179,38 @@ public class GuiListener implements Listener {
         session.markDirty();
     }
 
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onCreative(InventoryCreativeEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+        OpenSession session = guiManager.getSession(player.getUniqueId());
+        if (session == null) return;
+        if (!session.getInventory().equals(event.getView().getTopInventory())) return;
+
+        int slot = event.getRawSlot();
+        int topSize = event.getView().getTopInventory().getSize();
+        if (slot < 0 || slot >= topSize) return; // click in player's own inventory — allow
+
+        // Nav row and main menu: always block
+        if (session.getPage() == -1 || EnderchestGui.NAV_SLOTS.contains(slot)) {
+            event.setCancelled(true);
+            return;
+        }
+        // Read-only sessions: block content area too
+        if (session.isReadOnly()) {
+            event.setCancelled(true);
+            return;
+        }
+        session.markDirty();
+    }
+
     @EventHandler(priority = EventPriority.MONITOR)
     public void onClose(InventoryCloseEvent event) {
         if (!(event.getPlayer() instanceof Player player)) return;
+        // Only play close sound if truly closing (not navigating to another GUI)
+        var session = guiManager.getSession(player.getUniqueId());
+        if (session != null && session.getInventory().equals(event.getInventory())) {
+            config.playSound(player, "close");
+        }
         guiManager.onClose(player.getUniqueId(), event.getInventory());
     }
 
@@ -185,7 +222,8 @@ public class GuiListener implements Listener {
         int nextSlot  = navCfg != null ? navCfg.getInt("next-page.slot", 53) : 53;
         int homeSlot  = navCfg != null ? navCfg.getInt("home.slot", 49) : 49;
 
-        int maxPages    = config.getMaxPages(player);
+        // For admin sessions the target may be offline, use global max
+        int maxPages    = session.isAdminView() ? config.getMaxPages() : config.getMaxPages(player);
         int currentPage = session.getPage();
 
         if (slot == prevSlot && currentPage > 1) {

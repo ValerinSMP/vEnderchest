@@ -1,0 +1,42 @@
+2026-04-06 03:25:13 database: wrong user or password; user: "SA"
+org.h2.message.DbException: Nombre de usuario ó password incorrecto
+Wrong user name or password [28000-214]
+	at org.h2.message.DbException.get(DbException.java:223)
+	at org.h2.message.DbException.get(DbException.java:199)
+	at org.h2.message.DbException.get(DbException.java:188)
+	at org.h2.engine.Engine.openSession(Engine.java:154)
+	at org.h2.engine.Engine.openSession(Engine.java:222)
+	at org.h2.engine.Engine.createSession(Engine.java:201)
+	at org.h2.engine.SessionRemote.connectEmbeddedOrServer(SessionRemote.java:338)
+	at org.h2.jdbc.JdbcConnection.<init>(JdbcConnection.java:122)
+	at org.h2.util.JdbcUtils.getConnection(JdbcUtils.java:288)
+	at org.h2.util.JdbcUtils.getConnection(JdbcUtils.java:270)
+	at org.h2.tools.RunScript.process(RunScript.java:312)
+	at org.h2.tools.RunScript.runTool(RunScript.java:139)
+	at org.h2.tools.RunScript.main(RunScript.java:66)
+Caused by: org.h2.jdbc.JdbcSQLInvalidAuthorizationSpecException: Nombre de usuario ó password incorrecto
+Wrong user name or password [28000-214]
+	at org.h2.message.DbException.getJdbcSQLException(DbException.java:510)
+	at org.h2.message.DbException.getJdbcSQLException(DbException.java:477)
+	... 13 more
+2026-04-06 03:26:05 database: wrong user or password; user: "SA"
+org.h2.message.DbException: Nombre de usuario ó password incorrecto
+Wrong user name or password [28000-214]
+	at org.h2.message.DbException.get(DbException.java:223)
+	at org.h2.message.DbException.get(DbException.java:199)
+	at org.h2.message.DbException.get(DbException.java:188)
+	at org.h2.engine.Engine.openSession(Engine.java:154)
+	at org.h2.engine.Engine.openSession(Engine.java:222)
+	at org.h2.engine.Engine.createSession(Engine.java:201)
+	at org.h2.engine.SessionRemote.connectEmbeddedOrServer(SessionRemote.java:338)
+	at org.h2.jdbc.JdbcConnection.<init>(JdbcConnection.java:122)
+	at org.h2.util.JdbcUtils.getConnection(JdbcUtils.java:288)
+	at org.h2.util.JdbcUtils.getConnection(JdbcUtils.java:270)
+	at org.h2.tools.RunScript.process(RunScript.java:312)
+	at org.h2.tools.RunScript.runTool(RunScript.java:139)
+	at org.h2.tools.RunScript.main(RunScript.java:66)
+Caused by: org.h2.jdbc.JdbcSQLInvalidAuthorizationSpecException: Nombre de usuario ó password incorrecto
+Wrong user name or password [28000-214]
+	at org.h2.message.DbException.getJdbcSQLException(DbException.java:510)
+	at org.h2.message.DbException.getJdbcSQLException(DbException.java:477)
+	... 13 more

@@ -18,6 +18,7 @@ dependencies {
     implementation("org.xerial:sqlite-jdbc:3.47.1.0")
     implementation("com.mysql:mysql-connector-j:9.1.0")
     implementation("com.zaxxer:HikariCP:6.2.1")
+    implementation("com.h2database:h2:2.1.214")
 }
 
 java {
@@ -35,6 +36,8 @@ tasks {
         relocate("org.sqlite", "com.valerin.venderchest.libs.sqlite")
         relocate("com.mysql", "com.valerin.venderchest.libs.mysql")
         relocate("com.zaxxer.hikari", "com.valerin.venderchest.libs.hikari")
+        // H2 is NOT relocated: it uses internal resource paths (org/h2/res/) that
+        // Shadow can't patch in string constants, causing ClassLoader failures at runtime.
 
         // SQLite nativo: mantener solo Linux x86_64 y Windows x86_64
         exclude("org/sqlite/native/Linux-Android/**")

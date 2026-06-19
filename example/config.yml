@@ -1,0 +1,122 @@
+# DOCUMENTATION: https://docs.artillex-studios.com/axvaults.html
+
+prefix: '&8[<gradient:#55ff00:#AAFF00>ᴠᴀᴜʟᴛꜱ</gradient>&8] '
+
+# this setting is not reloadable, you have to restart the server
+# how often should the plugin save vaults from ram to the database?
+# this is in minutes
+auto-save-minutes: 5
+
+# how many rows should the /axvault selector menu have?
+vault-selector-rows: 6
+
+# how many rows should the vault icon picker have?
+item-picker-rows: 6
+
+# how many rows should vaults have?
+# you can override this with the axvaults.rows.# permission
+# you should keep this on 6 and only /change it with permissions
+vault-storage-rows: 6
+
+database:
+  # h2, sqlite
+  # for single server setups we recommend h2
+  type: h2
+
+# modes:
+# 0 - every vault needs a separate permission (axvaults.vault.10 will only give access to vault #10)
+# 1 - the highest permission will give all the previous vaults (axvaults.vault.10 will give access to vaults #1-#10)
+permission-mode: 0
+
+# should vaults that the player can't access be shown in the selector gui?
+show-locked-vaults: true
+
+# how many items should be shown in the vault selector
+# modes:
+# 1 - the number of the vault, it will restart once it reaches 64
+# 2 - always show 1
+# 3 - show the slots filled in the vault
+selector-item-amount-mode: 1
+
+# how many vaults should be shown in the vault gui
+# this only has an effect if show-locked-vaults is false
+# set to -1 to show an unlimited amount of vaults
+max-vault-amount: -1
+
+# when clicking outside of the vault, should the vault selector be opened?
+clicking-outside-open-selector: false
+
+# block types that will open the vault selector when right-clicked
+# list of valid materials: https://hub.spigotmc.org/javadocs/bukkit/org/bukkit/Material.html
+# note: this is only recommended if you want to replace for example ender chests with the vault selector
+# to turn a single block into a vault or a selector just use the /axvaultadmin set [vault] command
+vault-selector-blocks: []
+
+# if enabled, the icon picker will not close after selecting an item
+selector-stay-open: false
+
+# should the plugin delete emptied vaults from the database?
+# you shouldn't have to disable this unless a developers tells you to
+delete-empty-vaults: true
+
+# how often should players be able to refresh guis?
+# this doesn't impact performance too much, however you should not set it too low
+gui-refresh-cooldown-milliseconds: 100
+
+# should items be serialized asynchronously?
+# only enable if you are having performance issues
+# this setting might cause unexcepted bugs, like item loss
+# we suggest creating a spark report and sending it to the developers before using this
+async-item-serializer: false
+
+# list of items that CAN'T be put into vaults
+#
+# supported regex: (optional)
+# - 'name' #  only 'name' is disallowed
+# - 'name*' #  disallows text starting with 'name'
+# - '*name' #  disallows text ending with 'name'
+# - '*name*' #  disallows text containing 'name'
+#
+# you can use some sections from our item builder: (https://docs.artillex-studios.com/item-builder.html)
+#  > name
+#  > material / type
+#  > custom-model-data (only the old variant)
+blacklist-items:
+- custom-model-data: 100
+  material: BARRIER
+  name: '*Some custom item*'
+- custom-model-data: 150
+  material: BARRIER
+  name: '*Another custom item*'
+
+# you must define at least 1
+# requires a restart to update
+player-command-aliases:
+- axvault
+- vault
+- pv
+- axpv
+- axvaults
+- vaults
+
+# you must define at least 1
+# requires a restart to update
+admin-command-aliases:
+- axvaultsadmin
+- axvaultadmin
+- vaultadmin
+- vaultsadmin
+
+# should be plugin notify you if there is a new update?
+update-notifier:
+  # if enabled, it will display the message in the console
+  enabled: true
+  # if enabled, it will broadcast the update message to all players who have the <plugin-name>.update-notify permission
+  on-join: false
+
+# prints information about the plugin
+# this can cause a lot of spam, only use if a developer asks you to
+debug: false
+
+# do not change this
+version: '11'

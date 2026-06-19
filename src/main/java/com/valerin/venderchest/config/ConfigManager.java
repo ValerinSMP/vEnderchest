@@ -6,9 +6,13 @@ import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import net.kyori.adventure.text.format.TextDecoration;
+import com.valerin.venderchest.storage.Storage;
 import org.bukkit.Material;
+import org.bukkit.Sound;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.Player;
 
 import java.io.File;
 import java.util.HashSet;
@@ -24,8 +28,10 @@ public class ConfigManager {
     private FileConfiguration messages;
     private FileConfiguration guiMain;
     private FileConfiguration guiEnderchest;
+    private FileConfiguration sounds;
 
     private Set<Material> blacklist;
+    private Storage storage;
 
     public ConfigManager(VEnderchest plugin) {
         this.plugin = plugin;
@@ -38,10 +44,12 @@ public class ConfigManager {
         config = plugin.getConfig();
 
         saveResource("messages.yml");
+        saveResource("sounds.yml");
         saveResource("gui/main.yml");
         saveResource("gui/enderchest.yml");
 
         messages = load("messages.yml");
+        sounds = load("sounds.yml");
         guiMain = load("gui/main.yml");
         guiEnderchest = load("gui/enderchest.yml");
 
@@ -126,7 +134,10 @@ public class ConfigManager {
 
     // --- helpers ---
 
-    public int getMaxPages(org.bukkit.entity.Player player) {
+    public void setStorage(Storage s) { this.storage = s; }
+
+    /** Base pages from VIP permission alone. */
+    public int getBasePages(Player player) {
         int cap = getMaxPages();
         for (int n = cap; n >= 1; n--) {
             if (player.hasPermission("venderchest.pages." + n)) return n;
@@ -134,7 +145,27 @@ public class ConfigManager {
         return getDefaultPages();
     }
 
+    /** Base pages + extra purchased vaults, capped at max-pages. */
+    public int getMaxPages(Player player) {
+        int base  = getBasePages(player);
+        int extra = storage != null ? storage.getExtraPages(player.getUniqueId()) : 0;
+        return Math.min(base + extra, getMaxPages());
+    }
+
     public MiniMessage getMM() { return mm; }
+
+    public void playSound(Player player, String key) {
+        ConfigurationSection sec = sounds.getConfigurationSection(key);
+        if (sec == null || !sec.getBoolean("enabled", true)) return;
+        String name = sec.getString("sound", "");
+        if (name.isEmpty()) return;
+        try {
+            Sound sound = Sound.valueOf(name.toUpperCase());
+            float volume = (float) sec.getDouble("volume", 1.0);
+            float pitch  = (float) sec.getDouble("pitch", 1.0);
+            player.playSound(player.getLocation(), sound, volume, pitch);
+        } catch (IllegalArgumentException ignored) {}
+    }
 
     /** Deserializa MiniMessage y fuerza italic=false para nombres/lore de ítems de GUI. */
     public Component parse(String text) {

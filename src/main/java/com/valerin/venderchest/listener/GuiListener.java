@@ -49,7 +49,12 @@ public class GuiListener implements Listener {
 
         // ── Main menu (page == -1) ─────────────────────────────────────────
         if (session.getPage() == -1) {
-            if (!clickedTop) return; // player inventory half — allow normal use
+            if (!clickedTop) {
+                // Block shift-click into the menu — items would disappear into nav-button slots
+                if (event.getAction() == InventoryAction.MOVE_TO_OTHER_INVENTORY)
+                    event.setCancelled(true);
+                return;
+            }
             event.setCancelled(true);
             if (event.getAction() == InventoryAction.NOTHING) return;
 

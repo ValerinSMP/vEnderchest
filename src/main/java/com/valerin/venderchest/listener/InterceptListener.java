@@ -29,7 +29,6 @@ public class InterceptListener implements Listener {
 
         var player = event.getPlayer();
         if (player.hasPermission("venderchest.bypass")) return;
-        if (!player.hasPermission("venderchest.use")) return;
 
         event.setCancelled(true);
         guiManager.openMainMenu(player);

@@ -1,0 +1,11 @@
+prefix: "<dark_gray>[</dark_gray><dark_purple>ᴇɴᴅᴇʀᴄʜᴇsᴛ</dark_purple><dark_gray>]</dark_gray> <reset>"
+
+no-permission: "<red>No tienes permiso para hacer esto."
+players-only: "<red>Este comando es solo para jugadores."
+page-out-of-range: "<red>Página <white><page></white> no existe. Máximo: <white><max></white>."
+page-locked: "<red>No tienes acceso a la página <white><page></white>."
+player-not-found: "<red>Jugador <white><player></white> no encontrado."
+admin-viewing: "<gray>Viendo enderchest de <white><player></white> <gray>(página <white><page></white>)."
+admin-cleared: "<green>Página <white><page></white> de <white><player></white> limpiada."
+config-reloaded: "<green>Configuración recargada."
+item-blacklisted: "<red>Ese ítem no puede guardarse en el enderchest."

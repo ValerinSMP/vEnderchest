@@ -1,0 +1,41 @@
+# Sonidos de feedback para vEnderchest
+# sound: nombre del Sound de Bukkit (https://hub.spigotmc.org/javadocs/bukkit/org/bukkit/Sound.html)
+# volume: 0.0 - 1.0
+# pitch:  0.5 - 2.0  (< 1.0 = grave, > 1.0 = agudo)
+# enabled: true/false por sonido
+
+open-menu:
+  enabled: true
+  sound: BLOCK_ENDER_CHEST_OPEN
+  volume: 0.6
+  pitch: 1.0
+
+open-page:
+  enabled: true
+  sound: BLOCK_CHEST_OPEN
+  volume: 0.5
+  pitch: 1.1
+
+close:
+  enabled: true
+  sound: BLOCK_ENDER_CHEST_CLOSE
+  volume: 0.6
+  pitch: 1.0
+
+navigate:
+  enabled: true
+  sound: ITEM_BOOK_PAGE_TURN
+  volume: 0.6
+  pitch: 1.0
+
+click-home:
+  enabled: true
+  sound: ITEM_BOOK_PAGE_TURN
+  volume: 0.5
+  pitch: 0.8
+
+denied:
+  enabled: true
+  sound: ENTITY_VILLAGER_NO
+  volume: 0.6
+  pitch: 1.2

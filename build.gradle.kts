@@ -18,7 +18,7 @@ dependencies {
     implementation("org.xerial:sqlite-jdbc:3.47.1.0")
     implementation("com.mysql:mysql-connector-j:9.1.0")
     implementation("com.zaxxer:HikariCP:6.2.1")
-    implementation("com.h2database:h2:2.1.214")
+    implementation("com.h2database:h2:2.2.224")
 }
 
 java {

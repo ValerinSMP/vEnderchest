@@ -12,7 +12,7 @@ commands:
   ec:
     description: Abre tu enderchest extendido
     usage: /ec [página]
-    aliases: [enderchest]
+    aliases: [enderchest, pv, playervaults, vault, vaults]
     permission: venderchest.use
   ecadmin:
     description: Administración de enderchests
@@ -22,7 +22,7 @@ commands:
 permissions:
   venderchest.use:
     description: Acceso básico al enderchest extendido
-    default: true
+    default: op
   venderchest.bypass:
     description: Abre el enderchest vanilla real ignorando vEnderchest
     default: op

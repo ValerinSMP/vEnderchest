@@ -1,5 +1,6 @@
 package com.valerin.venderchest.listener;
 
+import com.valerin.venderchest.api.CloseReason;
 import com.valerin.venderchest.gui.GuiManager;
 import org.bukkit.Material;
 import org.bukkit.event.EventHandler;
@@ -7,6 +8,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerKickEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
 
@@ -34,9 +36,21 @@ public class InterceptListener implements Listener {
         guiManager.openMainMenu(player);
     }
 
-    @EventHandler
+    /**
+     * Explicit, server-authoritative commit-and-close on disconnect — does not assume
+     * {@code InventoryCloseEvent} has already fired (that assumption is not guaranteed across
+     * Bukkit forks and was the source of a latent lost-write bug). Safe to run even if
+     * {@code onClose} already handled the same session: {@link GuiManager#handleDisconnect} only
+     * ever performs the commit once per session (compare-and-swapped), so redundant calls no-op.
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(PlayerQuitEvent event) {
-        // onClose fires before quit, but clean up lastPage cache after a while
-        guiManager.cleanup(event.getPlayer().getUniqueId());
+        guiManager.handleDisconnect(event.getPlayer().getUniqueId(), CloseReason.LOGOUT);
+    }
+
+    /** Fires before the quit pipeline for a kicked player; gives a more precise close reason than LOGOUT. */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onKick(PlayerKickEvent event) {
+        guiManager.handleDisconnect(event.getPlayer().getUniqueId(), CloseReason.KICK);
     }
 }

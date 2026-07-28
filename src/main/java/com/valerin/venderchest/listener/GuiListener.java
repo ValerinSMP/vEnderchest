@@ -31,11 +31,25 @@ public class GuiListener implements Listener {
     public void onClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
 
+        Inventory topInv = event.getView().getTopInventory();
+        if (guiManager.isBackupBrowseInventory(player, topInv)) {
+            // Pure click-driven menu - never allow any item movement, in either half.
+            event.setCancelled(true);
+            int rawSlot = event.getRawSlot();
+            if (rawSlot >= 0 && rawSlot < topInv.getSize()) {
+                guiManager.handleBackupBrowseClick(player, rawSlot);
+            }
+            return;
+        }
+
         OpenSession session = guiManager.getSession(player.getUniqueId());
         if (session == null) return;
 
-        Inventory topInv = event.getView().getTopInventory();
         if (!session.getInventory().equals(topInv)) return;
+        if (!guiManager.validateSessionOrReject(session)) {
+            event.setCancelled(true);
+            return;
+        }
 
         int rawSlot = event.getRawSlot();
         int topSize = topInv.getSize();
@@ -98,7 +112,6 @@ public class GuiListener implements Listener {
                     return;
                 }
             }
-            session.markDirty();
             return;
         }
 
@@ -135,19 +148,26 @@ public class GuiListener implements Listener {
                 }
             }
         }
-
-        session.markDirty();
     }
 
     @EventHandler(priority = EventPriority.HIGH)
     public void onDrag(InventoryDragEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
 
+        Inventory topInv = event.getView().getTopInventory();
+        if (guiManager.isBackupBrowseInventory(player, topInv)) {
+            event.setCancelled(true);
+            return;
+        }
+
         OpenSession session = guiManager.getSession(player.getUniqueId());
         if (session == null) return;
 
-        Inventory topInv = event.getView().getTopInventory();
         if (!session.getInventory().equals(topInv)) return;
+        if (!guiManager.validateSessionOrReject(session)) {
+            event.setCancelled(true);
+            return;
+        }
 
         int topSize = topInv.getSize();
 
@@ -180,16 +200,22 @@ public class GuiListener implements Listener {
             player.sendMessage(config.msg("item-blacklisted"));
             return;
         }
-
-        session.markDirty();
     }
 
     @EventHandler(priority = EventPriority.HIGH)
     public void onCreative(InventoryCreativeEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
+        if (guiManager.isBackupBrowseInventory(player, event.getView().getTopInventory())) {
+            event.setCancelled(true);
+            return;
+        }
         OpenSession session = guiManager.getSession(player.getUniqueId());
         if (session == null) return;
         if (!session.getInventory().equals(event.getView().getTopInventory())) return;
+        if (!guiManager.validateSessionOrReject(session)) {
+            event.setCancelled(true);
+            return;
+        }
 
         int slot = event.getRawSlot();
         int topSize = event.getView().getTopInventory().getSize();
@@ -205,12 +231,12 @@ public class GuiListener implements Listener {
             event.setCancelled(true);
             return;
         }
-        session.markDirty();
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onClose(InventoryCloseEvent event) {
         if (!(event.getPlayer() instanceof Player player)) return;
+        guiManager.handleBackupBrowseClose(player.getUniqueId(), event.getInventory());
         // Only play close sound if truly closing (not navigating to another GUI)
         var session = guiManager.getSession(player.getUniqueId());
         if (session != null && session.getInventory().equals(event.getInventory())) {

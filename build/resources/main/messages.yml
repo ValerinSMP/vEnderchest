@@ -9,3 +9,4 @@ admin-viewing: "<gray>Viendo enderchest de <white><player></white> <gray>(págin
 admin-cleared: "<green>Página <white><page></white> de <white><player></white> limpiada."
 config-reloaded: "<green>Configuración recargada."
 item-blacklisted: "<red>Ese ítem no puede guardarse en el enderchest."
+vault-busy: "<red>Este enderchest está siendo usado en otro lugar ahora mismo. Intenta de nuevo en unos segundos."

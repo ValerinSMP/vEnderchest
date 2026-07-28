@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.valerin.venderchest.session.TransactionDiffEngineTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-07-28T03:09:39.650Z" hostname="MTYN-LAPTOP" time="0.02">
+  <properties/>
+  <testcase name="unchangedSlots_produceNoDiffEntries()" classname="com.valerin.venderchest.session.TransactionDiffEngineTest" time="0.005"/>
+  <testcase name="nonStackableItem_fullRemoval_isClassifiedAsRemove()" classname="com.valerin.venderchest.session.TransactionDiffEngineTest" time="0.002"/>
+  <testcase name="depositAndWithdraw_ofUnrelatedItems_areClassifiedIndependently()" classname="com.valerin.venderchest.session.TransactionDiffEngineTest" time="0.003"/>
+  <testcase name="singleUnambiguousRelocate_isClassifiedAsMove()" classname="com.valerin.venderchest.session.TransactionDiffEngineTest" time="0.002"/>
+  <testcase name="partialStackWithdrawal_isClassifiedAsReplaceWithAmountDelta()" classname="com.valerin.venderchest.session.TransactionDiffEngineTest" time="0.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

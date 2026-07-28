@@ -4,6 +4,7 @@ import com.valerin.venderchest.VEnderchest;
 import com.valerin.venderchest.config.ConfigManager;
 import com.valerin.venderchest.gui.GuiManager;
 import com.valerin.venderchest.storage.Storage;
+import com.valerin.venderchest.utils.RelativeTime;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
@@ -11,6 +12,7 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -60,6 +62,7 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
             case "addvault"    -> handleVault(sender, args, true);
             case "removevault" -> handleVault(sender, args, false);
             case "migrate"     -> handleMigrate(sender, args);
+            case "restore"     -> handleRestore(sender, args);
             default -> { sendUsage(sender); yield true; }
         };
     }
@@ -125,6 +128,7 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
 
         int page = args.length >= 3 ? parsePageOrDefault(args[2], 1) : 1;
         storage.clearPage(targetUuid, page);
+        guiManager.invalidateCache(targetUuid, page); // bypasses the session/commit path - cache would otherwise go stale
         sender.sendMessage(config.msg("admin-cleared",
                 Placeholder.unparsed("player", targetName),
                 Placeholder.unparsed("page", String.valueOf(page))));
@@ -241,16 +245,140 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    /**
+     * /ecadmin restore <player>                -> lists stored backups (newest first)
+     * /ecadmin restore <player> <id>            -> read-only preview of that backup's content
+     * /ecadmin restore <player> <id> confirm    -> actually restores it into the live page
+     * <p>
+     * Backups are written automatically on every real commit (see VaultTransactionService) -
+     * this command only ever reads/restores them, never creates one directly.
+     */
+    /**
+     * /ecadmin restore <player>                -> opens the clickable backup-list GUI (in-game),
+     *                                              or a chat listing from console.
+     * /ecadmin restore <player> <id>            -> opens the read-only preview GUI, with an
+     *                                              in-GUI confirm-guarded restore button.
+     * /ecadmin restore <player> <id> confirm    -> restores directly, no GUI - works from console.
+     * <p>
+     * Backups are written automatically on every real commit (see VaultTransactionService) -
+     * this command only ever reads/restores them, never creates one directly.
+     */
+    private boolean handleRestore(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage(config.getMM().deserialize(
+                    "<gray>Uso: <white>/ecadmin restore <jugador> [id] [confirm]"));
+            return true;
+        }
+
+        var op = Bukkit.getOfflinePlayerIfCached(args[1]);
+        if (op == null) {
+            sender.sendMessage(config.msg("player-not-found", Placeholder.unparsed("player", args[1])));
+            return true;
+        }
+        UUID targetUuid = op.getUniqueId();
+        String targetName = op.getName() != null ? op.getName() : args[1];
+
+        if (args.length == 2) {
+            if (sender instanceof Player admin) {
+                guiManager.openBackupList(admin, targetUuid, targetName);
+            } else {
+                listBackupsInChat(sender, targetUuid, targetName);
+            }
+            return true;
+        }
+
+        int backupId;
+        try {
+            backupId = Integer.parseInt(args[2]);
+        } catch (NumberFormatException e) {
+            sender.sendMessage(config.getMM().deserialize("<red>ID de backup inválido."));
+            return true;
+        }
+
+        if (args.length >= 4 && args[3].equalsIgnoreCase("confirm")) {
+            directRestoreById(sender, targetUuid, targetName, backupId);
+            return true;
+        }
+
+        if (sender instanceof Player admin) {
+            guiManager.openBackupPreviewDirect(admin, targetUuid, targetName, backupId);
+        } else {
+            sender.sendMessage(config.getMM().deserialize(
+                    "<red>Previsualizar un backup requiere estar en el juego. Agregá <white>confirm</white> para restaurar directo."));
+        }
+        return true;
+    }
+
+    private void listBackupsInChat(CommandSender sender, UUID targetUuid, String targetName) {
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            List<Storage.BackupRecord> backups = storage.listBackups(targetUuid);
+            plugin.getServer().getScheduler().runTask(plugin, () -> {
+                if (backups.isEmpty()) {
+                    sender.sendMessage(config.getMM().deserialize(
+                            "<gray>No hay backups guardados para <white>" + targetName + "<gray>."));
+                    return;
+                }
+                sender.sendMessage(config.getMM().deserialize(
+                        "<gray>Backups de <white>" + targetName + "<gray> (más reciente primero):"));
+                for (Storage.BackupRecord b : backups) {
+                    sender.sendMessage(config.getMM().deserialize(
+                            "<dark_gray>#<white>" + b.id() + " <dark_gray>página <white>" + b.page()
+                                    + " <dark_gray>rev <white>" + b.revision()
+                                    + " <dark_gray>· " + RelativeTime.since(b.createdAtMillis())));
+                }
+                sender.sendMessage(config.getMM().deserialize(
+                        "<gray>Usa <white>/ecadmin restore " + targetName + " <id> confirm</white> para restaurar."));
+            });
+        });
+    }
+
+    /** Restores directly with no preview - the console-friendly path, also reachable from in-game. */
+    private void directRestoreById(CommandSender sender, UUID targetUuid, String targetName, int backupId) {
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            Storage.BackupRecord record = storage.getBackup(backupId);
+            if (record == null || !record.uuid().equals(targetUuid)) {
+                plugin.getServer().getScheduler().runTask(plugin, () -> sender.sendMessage(config.getMM().deserialize(
+                        "<red>Ese backup no existe o no pertenece a " + targetName + ".")));
+                return;
+            }
+            ItemStack[] items = storage.loadBackupItems(backupId);
+            if (items == null) {
+                plugin.getServer().getScheduler().runTask(plugin, () -> sender.sendMessage(
+                        config.getMM().deserialize("<red>No se pudo leer el contenido del backup.")));
+                return;
+            }
+            plugin.getServer().getScheduler().runTask(plugin, () -> {
+                if (guiManager.isVaultOpen(targetUuid, record.page())) {
+                    sender.sendMessage(config.getMM().deserialize(
+                            "<red>La página " + record.page() + " de " + targetName
+                                    + " está abierta ahora mismo. Pedile que la cierre antes de restaurar."));
+                    return;
+                }
+                plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+                    storage.savePage(targetUuid, record.page(), items);
+                    plugin.getServer().getScheduler().runTask(plugin, () -> {
+                        guiManager.invalidateCache(targetUuid, record.page());
+                        plugin.getLogger().warning("[vEnderchest] [audit] event=restore backup=" + backupId
+                                + " owner=" + targetUuid + " vault=" + record.page() + " by=" + sender.getName());
+                        sender.sendMessage(config.getMM().deserialize(
+                                "<green>Backup <white>#" + backupId + "</white> restaurado en la página <white>"
+                                        + record.page() + "</white> de <white>" + targetName + "</white>."));
+                    });
+                });
+            });
+        });
+    }
+
     private void sendUsage(CommandSender sender) {
         sender.sendMessage(config.getMM().deserialize(
-                "<gray>Uso: <white>/ecadmin <view|clear|reload|addvault|removevault|migrate> [jugador] [args]"));
+                "<gray>Uso: <white>/ecadmin <view|clear|reload|addvault|removevault|migrate|restore> [jugador] [args]"));
     }
 
     @Override
     public @Nullable List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
                                                 @NotNull String label, @NotNull String[] args) {
         if (args.length == 1) {
-            return List.of("view", "clear", "reload", "addvault", "removevault", "migrate").stream()
+            return List.of("view", "clear", "reload", "addvault", "removevault", "migrate", "restore").stream()
                     .filter(s -> s.startsWith(args[0].toLowerCase())).toList();
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("migrate")) {
@@ -260,6 +388,9 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
         if (args.length == 4 && args[0].equalsIgnoreCase("migrate") && args[1].equalsIgnoreCase("reset")) {
             return List.of("vanilla", "axvaults").stream()
                     .filter(s -> s.startsWith(args[3].toLowerCase())).toList();
+        }
+        if (args.length == 4 && args[0].equalsIgnoreCase("restore")) {
+            return List.of("confirm").stream().filter(s -> s.startsWith(args[3].toLowerCase())).toList();
         }
         String sub = args[0].toLowerCase();
         if (args.length == 2) {

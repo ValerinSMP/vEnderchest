@@ -28,9 +28,24 @@ public class MysqlStorage extends AbstractJdbcStorage {
     }
 
     @Override
-    protected String upsertSql() {
-        return "INSERT INTO ec_pages (uuid, page, data) VALUES (?, ?, ?) "
-                + "ON DUPLICATE KEY UPDATE data = VALUES(data)";
+    protected String insertIfAbsentSql() {
+        return "INSERT IGNORE INTO ec_pages (uuid, page, data, revision) VALUES (?, ?, ?, 1)";
+    }
+
+    @Override
+    protected String backupsTableSql() {
+        return """
+            CREATE TABLE IF NOT EXISTS ec_backups (
+                id INT NOT NULL AUTO_INCREMENT,
+                uuid VARCHAR(36) NOT NULL,
+                page TINYINT NOT NULL,
+                revision BIGINT NOT NULL,
+                reason VARCHAR(32) NOT NULL,
+                created_at BIGINT NOT NULL,
+                data MEDIUMTEXT NOT NULL,
+                PRIMARY KEY (id)
+            )
+            """;
     }
 
     @Override
@@ -59,6 +74,12 @@ public class MysqlStorage extends AbstractJdbcStorage {
                     PRIMARY KEY (uuid, type)
                 )
                 """);
+            stmt.execute(backupsTableSql());
+            try (var alterStmt = c.createStatement()) {
+                alterStmt.execute("ALTER TABLE ec_pages ADD COLUMN revision BIGINT NOT NULL DEFAULT 0");
+            } catch (SQLException alreadyExists) {
+                // Column already present from a previous startup.
+            }
         }
     }
 

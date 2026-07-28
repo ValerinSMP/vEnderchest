@@ -111,6 +111,38 @@ public class ConfigManager {
         return blacklist.contains(material);
     }
 
+    // --- vantidupe / duplication-protection observability ---
+    // NOTE: these only control logging/labeling. The duplication protection itself (session
+    // serialization + revision compare-and-swap) has no config switch and cannot be disabled here.
+
+    public String getVantidupeServerId() {
+        return config.getString("vantidupe.server-id", "default");
+    }
+
+    /** Raw string; parsed against {@code VaultAuditLog.Level} by the caller, defaulting to NORMAL on anything unrecognized. */
+    public String getVantidupeAuditLevel() {
+        return config.getString("vantidupe.audit-level", "NORMAL");
+    }
+
+    /** How often (seconds) the in-memory orphaned-session backstop sweep runs. Floored at 10s. */
+    public int getOrphanSweepSeconds() {
+        return Math.max(10, config.getInt("vantidupe.orphan-sweep-seconds", 60));
+    }
+
+    public boolean isWarnConsoleOnConflict() {
+        return config.getBoolean("vantidupe.warn-console-on-conflict", true);
+    }
+
+    // --- backups ---
+
+    public boolean isBackupsEnabled() {
+        return config.getBoolean("backups.enabled", true);
+    }
+
+    public int getBackupsKeepPerVault() {
+        return Math.max(1, config.getInt("backups.keep-per-vault", 20));
+    }
+
     // --- messages.yml ---
 
     public Component msg(String key, TagResolver... resolvers) {

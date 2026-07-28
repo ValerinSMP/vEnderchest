@@ -1,5 +1,7 @@
 package com.valerin.venderchest;
 
+import com.valerin.venderchest.api.CloseReason;
+import com.valerin.venderchest.api.VEnderChestApi;
 import com.valerin.venderchest.command.EcAdminCommand;
 import com.valerin.venderchest.command.EcCommand;
 import com.valerin.venderchest.config.ConfigManager;
@@ -9,9 +11,14 @@ import com.valerin.venderchest.listener.GuiListener;
 import com.valerin.venderchest.listener.InterceptListener;
 import com.valerin.venderchest.listener.PlayerJoinListener;
 import com.valerin.venderchest.migration.MigrationManager;
+import com.valerin.venderchest.session.VEnderChestApiImpl;
+import com.valerin.venderchest.session.VaultAuditLog;
+import com.valerin.venderchest.session.VaultSessionRegistry;
+import com.valerin.venderchest.session.VaultTransactionService;
 import com.valerin.venderchest.storage.MysqlStorage;
 import com.valerin.venderchest.storage.SqliteStorage;
 import com.valerin.venderchest.storage.Storage;
+import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.sql.SQLException;
@@ -20,10 +27,13 @@ public final class VEnderchest extends JavaPlugin {
 
     private static VEnderchest instance;
 
-    private ConfigManager    configManager;
-    private Storage          storage;
-    private GuiManager       guiManager;
-    private MigrationManager migrationManager;
+    private ConfigManager        configManager;
+    private Storage              storage;
+    private GuiManager           guiManager;
+    private MigrationManager     migrationManager;
+    private VaultSessionRegistry sessionRegistry;
+    private VaultAuditLog        auditLog;
+    private VaultTransactionService transactionService;
 
     @Override
     public void onEnable() {
@@ -44,7 +54,13 @@ public final class VEnderchest extends JavaPlugin {
             return;
         }
 
-        guiManager = new GuiManager(this, storage, configManager);
+        sessionRegistry = new VaultSessionRegistry();
+        auditLog = new VaultAuditLog(getLogger(), parseAuditLevel(configManager.getVantidupeAuditLevel()),
+                configManager.isWarnConsoleOnConflict());
+        transactionService = new VaultTransactionService(this, storage, sessionRegistry, auditLog,
+                configManager.getVantidupeServerId(), configManager.isBackupsEnabled(), configManager.getBackupsKeepPerVault());
+
+        guiManager = new GuiManager(this, storage, configManager, sessionRegistry, transactionService);
 
         migrationManager = new MigrationManager(storage, getDataFolder(), configManager.getMaxPages(), getLogger());
 
@@ -66,9 +82,18 @@ public final class VEnderchest extends JavaPlugin {
             ecAdminCmd.setTabCompleter(executor);
         }
 
-        long interval = (long) configManager.getAutosaveMinutes() * 60 * 20;
-        getServer().getScheduler().runTaskTimerAsynchronously(this,
-                () -> guiManager.saveAllDirty(), interval, interval);
+        // Autosave: runs on the main thread (it reads live Inventory contents); each session's
+        // actual DB write is still dispatched asynchronously by VaultTransactionService.
+        long autosaveInterval = (long) configManager.getAutosaveMinutes() * 60 * 20;
+        getServer().getScheduler().runTaskTimer(this, () -> guiManager.saveAllDirty(), autosaveInterval, autosaveInterval);
+
+        // Backstop: force-closes any tracked session whose actor went offline without a clean
+        // close. Bounded by the number of currently open sessions, not a database scan.
+        long sweepInterval = (long) configManager.getOrphanSweepSeconds() * 20;
+        getServer().getScheduler().runTaskTimer(this, () -> guiManager.sweepOrphans(), sweepInterval, sweepInterval);
+
+        getServer().getServicesManager().register(VEnderChestApi.class,
+                new VEnderChestApiImpl(sessionRegistry, storage), this, ServicePriority.Normal);
 
         if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {
             new PlaceholderHook(configManager, storage).register();
@@ -80,15 +105,28 @@ public final class VEnderchest extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        getServer().getServicesManager().unregisterAll(this);
+        if (guiManager != null) guiManager.closeAll(CloseReason.SHUTDOWN);
         if (migrationManager != null) migrationManager.close();
-        if (guiManager != null) guiManager.saveAllDirty();
         if (storage != null) storage.close();
         getLogger().info("vEnderchest disabled.");
     }
 
     public void reload() {
-        guiManager.closeAll();   // save dirty + close open GUIs
-        configManager.reload();  // reload all YMLs
+        guiManager.closeAll(CloseReason.ADMIN_FORCE); // save + close open GUIs
+        configManager.reload();                       // reload all YMLs
+        auditLog.setLevel(parseAuditLevel(configManager.getVantidupeAuditLevel()));
+        auditLog.setWarnConsoleOnConflict(configManager.isWarnConsoleOnConflict());
+        transactionService.setBackupsEnabled(configManager.isBackupsEnabled());
+        transactionService.setBackupsKeepPerVault(configManager.getBackupsKeepPerVault());
+    }
+
+    private static VaultAuditLog.Level parseAuditLevel(String raw) {
+        try {
+            return VaultAuditLog.Level.valueOf(raw.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return VaultAuditLog.Level.NORMAL;
+        }
     }
 
     public static VEnderchest getInstance() { return instance; }

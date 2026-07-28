@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.valerin.venderchest.session.VaultSessionRegistryTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-07-28T03:09:39.683Z" hostname="MTYN-LAPTOP" time="0.094">
+  <properties/>
+  <testcase name="reopenWhileActive_differentActor_isRejected()" classname="com.valerin.venderchest.session.VaultSessionRegistryTest" time="0.042"/>
+  <testcase name="reopenWhileActive_sameActor_isSupersededNeverASecondLiveSession()" classname="com.valerin.venderchest.session.VaultSessionRegistryTest" time="0.004"/>
+  <testcase name="clicksAreRejectedAsSoonAsTheSessionStartsCommitting()" classname="com.valerin.venderchest.session.VaultSessionRegistryTest" time="0.003"/>
+  <testcase name="shutdownDuringASave_lateAsyncCallbackCannotDoubleApply()" classname="com.valerin.venderchest.session.VaultSessionRegistryTest" time="0.002"/>
+  <testcase name="closeWithoutAClientPacket_stillCommitsAndFreesTheKey()" classname="com.valerin.venderchest.session.VaultSessionRegistryTest" time="0.001"/>
+  <testcase name="normalCloseAndSave_persistsThenFreesTheKey()" classname="com.valerin.venderchest.session.VaultSessionRegistryTest" time="0.002"/>
+  <testcase name="clickFromAPreviousSession_isRejectedByIdentity()" classname="com.valerin.venderchest.session.VaultSessionRegistryTest" time="0.004"/>
+  <testcase name="commitCanOnlyBePerformedOnce_soTheCommittedEventCanOnlyFireOnce()" classname="com.valerin.venderchest.session.VaultSessionRegistryTest" time="0.001"/>
+  <testcase name="twoOpensInTheSameTick_beforeEitherActivates_onlyOneSessionEverActive()" classname="com.valerin.venderchest.session.VaultSessionRegistryTest" time="0.005"/>
+  <testcase name="reportedExploit_reopenBeforeCommit_neverLetsASecondSessionObserveStaleState()" classname="com.valerin.venderchest.session.VaultSessionRegistryTest" time="0.002"/>
+  <testcase name="logoutMidSession_commitCanOnlyHappenOnceEvenIfCloseFiresToo()" classname="com.valerin.venderchest.session.VaultSessionRegistryTest" time="0.002"/>
+  <testcase name="normalOpen_registersAndActivatesASingleSession()" classname="com.valerin.venderchest.session.VaultSessionRegistryTest" time="0.001"/>
+  <testcase name="clicksFromAnotherInventoryInstanceAreRejected()" classname="com.valerin.venderchest.session.VaultSessionRegistryTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

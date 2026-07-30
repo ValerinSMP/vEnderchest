@@ -14,6 +14,7 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryCreativeEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 
@@ -54,6 +55,15 @@ public class GuiListener implements Listener {
         int rawSlot = event.getRawSlot();
         int topSize = topInv.getSize();
         boolean clickedTop = rawSlot >= 0 && rawSlot < topSize;
+
+        // Keep transfers inside inventories until the revision-checked commit settles.
+        if (event.getAction() == InventoryAction.DROP_ALL_CURSOR
+                || event.getAction() == InventoryAction.DROP_ONE_CURSOR
+                || event.getAction() == InventoryAction.DROP_ALL_SLOT
+                || event.getAction() == InventoryAction.DROP_ONE_SLOT) {
+            event.setCancelled(true);
+            return;
+        }
 
         // COLLECT_TO_CURSOR (double-click): could grab items from nav/GUI slots — always cancel
         if (event.getAction() == InventoryAction.COLLECT_TO_CURSOR) {
@@ -230,6 +240,14 @@ public class GuiListener implements Listener {
         if (session.isReadOnly()) {
             event.setCancelled(true);
             return;
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onDrop(PlayerDropItemEvent event) {
+        OpenSession session = guiManager.getSession(event.getPlayer().getUniqueId());
+        if (session != null && session.getVaultSession() != null) {
+            event.setCancelled(true);
         }
     }
 

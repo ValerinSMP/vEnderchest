@@ -4,6 +4,7 @@ import com.valerin.venderchest.api.CloseReason;
 import com.valerin.venderchest.api.VEnderChestApi;
 import com.valerin.venderchest.command.EcAdminCommand;
 import com.valerin.venderchest.command.EcCommand;
+import com.valerin.venderchest.command.VEnderchestCommand;
 import com.valerin.venderchest.config.ConfigManager;
 import com.valerin.venderchest.gui.GuiManager;
 import com.valerin.venderchest.hook.PlaceholderHook;
@@ -37,7 +38,10 @@ public final class VEnderchest extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        long startedAt = System.nanoTime();
         instance = this;
+        getLogger().info("Starting vEnderchest v" + getPluginMeta().getVersion() + "...");
+        getLogger().info("Platform: Paper 1.21.11+ | Java 21 bytecode");
 
         configManager = new ConfigManager(this);
 
@@ -56,7 +60,7 @@ public final class VEnderchest extends JavaPlugin {
 
         sessionRegistry = new VaultSessionRegistry();
         auditLog = new VaultAuditLog(getLogger(), parseAuditLevel(configManager.getVantidupeAuditLevel()),
-                configManager.isWarnConsoleOnConflict());
+                configManager.isWarnConsoleOnConflict(), configManager.isAuditConsoleEnabled());
         transactionService = new VaultTransactionService(this, storage, sessionRegistry, auditLog,
                 configManager.getVantidupeServerId(), configManager.isBackupsEnabled(), configManager.getBackupsKeepPerVault());
 
@@ -75,11 +79,18 @@ public final class VEnderchest extends JavaPlugin {
             ecCmd.setTabCompleter(executor);
         }
 
-        var ecAdminCmd = getCommand("ecadmin");
+        var ecAdminCmd = getCommand("venderchestadmin");
         if (ecAdminCmd != null) {
             var executor = new EcAdminCommand(this, guiManager, storage, configManager);
             ecAdminCmd.setExecutor(executor);
             ecAdminCmd.setTabCompleter(executor);
+        }
+
+        var rootCmd = getCommand("venderchest");
+        if (rootCmd != null) {
+            var executor = new VEnderchestCommand(this, configManager.getMessageService());
+            rootCmd.setExecutor(executor);
+            rootCmd.setTabCompleter(executor);
         }
 
         // Autosave: runs on the main thread (it reads live Inventory contents); each session's
@@ -100,16 +111,19 @@ public final class VEnderchest extends JavaPlugin {
             getLogger().info("PlaceholderAPI hook registered.");
         }
 
-        getLogger().info("vEnderchest enabled.");
+        getLogger().info("Storage: " + configManager.getDbType().toUpperCase());
+        getLogger().info("Enabled successfully in " + elapsedMillis(startedAt) + " ms.");
     }
 
     @Override
     public void onDisable() {
+        long startedAt = System.nanoTime();
+        getLogger().info("Stopping vEnderchest...");
         getServer().getServicesManager().unregisterAll(this);
         if (guiManager != null) guiManager.closeAll(CloseReason.SHUTDOWN);
         if (migrationManager != null) migrationManager.close();
         if (storage != null) storage.close();
-        getLogger().info("vEnderchest disabled.");
+        getLogger().info("Disabled successfully in " + elapsedMillis(startedAt) + " ms.");
     }
 
     public void reload() {
@@ -117,6 +131,7 @@ public final class VEnderchest extends JavaPlugin {
         configManager.reload();                       // reload all YMLs
         auditLog.setLevel(parseAuditLevel(configManager.getVantidupeAuditLevel()));
         auditLog.setWarnConsoleOnConflict(configManager.isWarnConsoleOnConflict());
+        auditLog.setConsoleEnabled(configManager.isAuditConsoleEnabled());
         transactionService.setBackupsEnabled(configManager.isBackupsEnabled());
         transactionService.setBackupsKeepPerVault(configManager.getBackupsKeepPerVault());
     }
@@ -127,6 +142,10 @@ public final class VEnderchest extends JavaPlugin {
         } catch (IllegalArgumentException e) {
             return VaultAuditLog.Level.NORMAL;
         }
+    }
+
+    private static long elapsedMillis(long startedAt) {
+        return (System.nanoTime() - startedAt) / 1_000_000L;
     }
 
     public static VEnderchest getInstance() { return instance; }

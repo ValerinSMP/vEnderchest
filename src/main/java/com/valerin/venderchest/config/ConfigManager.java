@@ -1,6 +1,7 @@
 package com.valerin.venderchest.config;
 
 import com.valerin.venderchest.VEnderchest;
+import com.valerin.venderchest.message.MessageService;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
@@ -9,12 +10,16 @@ import net.kyori.adventure.text.format.TextDecoration;
 import com.valerin.venderchest.storage.Storage;
 import org.bukkit.Material;
 import org.bukkit.Sound;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -29,6 +34,7 @@ public class ConfigManager {
     private FileConfiguration guiMain;
     private FileConfiguration guiEnderchest;
     private FileConfiguration sounds;
+    private MessageService messageService;
 
     private Set<Material> blacklist;
     private Storage storage;
@@ -40,6 +46,7 @@ public class ConfigManager {
 
     public void reload() {
         plugin.saveDefaultConfig();
+        load("config.yml");
         plugin.reloadConfig();
         config = plugin.getConfig();
 
@@ -49,6 +56,11 @@ public class ConfigManager {
         saveResource("gui/enderchest.yml");
 
         messages = load("messages.yml");
+        if (messageService == null) {
+            messageService = new MessageService(messages);
+        } else {
+            messageService.reload(messages);
+        }
         sounds = load("sounds.yml");
         guiMain = load("gui/main.yml");
         guiEnderchest = load("gui/enderchest.yml");
@@ -75,7 +87,38 @@ public class ConfigManager {
     }
 
     private FileConfiguration load(String path) {
-        return YamlConfiguration.loadConfiguration(new File(plugin.getDataFolder(), path));
+        File file = new File(plugin.getDataFolder(), path);
+        try (var stream = plugin.getResource(path)) {
+            if (stream == null) return YamlConfiguration.loadConfiguration(file);
+            YamlConfiguration defaults = new YamlConfiguration();
+            defaults.options().parseComments(true);
+            defaults.load(new InputStreamReader(stream, StandardCharsets.UTF_8));
+            return loadMerged(file, defaults);
+        } catch (IOException | InvalidConfigurationException e) {
+            plugin.getLogger().warning("Could not add new defaults to " + path + ": " + e.getMessage());
+            return YamlConfiguration.loadConfiguration(file);
+        }
+    }
+
+    static YamlConfiguration loadMerged(File file, FileConfiguration defaults)
+            throws IOException, InvalidConfigurationException {
+        YamlConfiguration current = new YamlConfiguration();
+        current.options().parseComments(true);
+        current.load(file);
+        if (mergeMissing(current, defaults)) current.save(file);
+        return current;
+    }
+
+    static boolean mergeMissing(FileConfiguration current, FileConfiguration defaults) {
+        boolean changed = false;
+        for (String key : defaults.getKeys(true)) {
+            if (defaults.isConfigurationSection(key) || current.contains(key)) continue;
+            current.set(key, defaults.get(key));
+            current.setComments(key, defaults.getComments(key));
+            current.setInlineComments(key, defaults.getInlineComments(key));
+            changed = true;
+        }
+        return changed;
     }
 
     // --- config.yml ---
@@ -109,6 +152,10 @@ public class ConfigManager {
 
     public boolean isBlacklisted(Material material) {
         return blacklist.contains(material);
+    }
+
+    public boolean isAuditConsoleEnabled() {
+        return config.getBoolean("audit.console-enabled", true);
     }
 
     // --- vantidupe / duplication-protection observability ---
@@ -146,14 +193,11 @@ public class ConfigManager {
     // --- messages.yml ---
 
     public Component msg(String key, TagResolver... resolvers) {
-        String raw = messages.getString(key, "<red>Missing message: " + key);
-        String prefix = messages.getString("prefix", "");
-        return mm.deserialize(prefix + raw, resolvers);
+        return messageService.component(key, resolvers);
     }
 
     public Component msgNoPrefix(String key, TagResolver... resolvers) {
-        String raw = messages.getString(key, "<red>Missing message: " + key);
-        return mm.deserialize(raw, resolvers);
+        return messageService.componentWithoutPrefix(key, resolvers);
     }
 
     // --- gui/main.yml ---
@@ -185,6 +229,7 @@ public class ConfigManager {
     }
 
     public MiniMessage getMM() { return mm; }
+    public MessageService getMessageService() { return messageService; }
 
     public void playSound(Player player, String key) {
         ConfigurationSection sec = sounds.getConfigurationSection(key);

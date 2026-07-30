@@ -1,10 +1,10 @@
 plugins {
     java
-    id("com.gradleup.shadow") version "8.3.0"
+    id("com.gradleup.shadow") version "9.3.0"
 }
 
 group = "com.valerin"
-version = "1.1.1"
+version = "1.0.0"
 
 repositories {
     mavenCentral()
@@ -27,6 +27,7 @@ dependencies {
     testImplementation("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     testImplementation(platform("org.junit:junit-bom:5.10.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 java {

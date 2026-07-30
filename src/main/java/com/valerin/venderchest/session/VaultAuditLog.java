@@ -19,11 +19,13 @@ public final class VaultAuditLog {
     private final Logger logger;
     private volatile Level level;
     private volatile boolean warnConsoleOnConflict;
+    private volatile boolean consoleEnabled;
 
-    public VaultAuditLog(Logger logger, Level level, boolean warnConsoleOnConflict) {
+    public VaultAuditLog(Logger logger, Level level, boolean warnConsoleOnConflict, boolean consoleEnabled) {
         this.logger = logger;
         this.level = level;
         this.warnConsoleOnConflict = warnConsoleOnConflict;
+        this.consoleEnabled = consoleEnabled;
     }
 
     public void setLevel(Level level) {
@@ -34,14 +36,19 @@ public final class VaultAuditLog {
         this.warnConsoleOnConflict = warnConsoleOnConflict;
     }
 
+    public void setConsoleEnabled(boolean consoleEnabled) {
+        this.consoleEnabled = consoleEnabled;
+    }
+
     public void opened(VaultSession s) {
-        if (level == Level.MINIMAL) return;
+        if (!consoleEnabled || level == Level.MINIMAL) return;
         logger.info("[audit] event=session_opened session=" + s.getSessionId()
                 + " owner=" + s.getOwnerUuid() + " actor=" + s.getActorUuid()
                 + " vault=" + s.getVaultId() + " revision=" + s.getCurrentRevision());
     }
 
     public void commit(VaultSession s, long baseRevision, long newRevision, List<SlotDiff> diffs, long durationMs) {
+        if (!consoleEnabled) return;
         if (level != Level.MINIMAL) {
             logger.info("[audit] event=commit session=" + s.getSessionId() + " owner=" + s.getOwnerUuid()
                     + " actor=" + s.getActorUuid() + " vault=" + s.getVaultId()
@@ -59,8 +66,8 @@ public final class VaultAuditLog {
 
     public void conflict(UUID sessionId, UUID ownerUuid, UUID actorUuid, String vaultId,
                           ConflictType type, long expectedRevision, long actualRevision) {
-        // This log entry is always written (forensic protection never depends on config); only its
-        // console prominence (warning vs info) is configurable via warn-console-on-conflict.
+        if (!consoleEnabled) return;
+        // Conflict handling and API events happen independently; this only controls console output.
         String line = "[audit] event=conflict type=" + type + " session=" + sessionId
                 + " owner=" + ownerUuid + " actor=" + actorUuid + " vault=" + vaultId
                 + " expected_rev=" + expectedRevision + " actual_rev=" + actualRevision;
@@ -68,25 +75,27 @@ public final class VaultAuditLog {
     }
 
     public void reopenDetected(UUID ownerUuid, UUID actorUuid, String vaultId, UUID previousSessionId) {
+        if (!consoleEnabled) return;
         logger.info("[audit] event=reopen_detected owner=" + ownerUuid + " actor=" + actorUuid
                 + " vault=" + vaultId + " previous_session=" + previousSessionId);
     }
 
     public void openRejected(UUID ownerUuid, UUID actorUuid, String vaultId, UUID blockingSessionId) {
+        if (!consoleEnabled) return;
         String line = "[audit] event=open_rejected owner=" + ownerUuid + " actor=" + actorUuid
                 + " vault=" + vaultId + " blocking_session=" + blockingSessionId;
         if (warnConsoleOnConflict) logger.warning(line); else logger.info(line);
     }
 
     public void closed(VaultSession s, CloseReason reason) {
-        if (level == Level.MINIMAL) return;
+        if (!consoleEnabled || level == Level.MINIMAL) return;
         logger.info("[audit] event=session_closed session=" + s.getSessionId()
                 + " owner=" + s.getOwnerUuid() + " actor=" + s.getActorUuid()
                 + " vault=" + s.getVaultId() + " reason=" + reason + " last_revision=" + s.getCurrentRevision());
     }
 
     public void loadDuration(VaultSession s, long durationMs) {
-        if (level != Level.VERBOSE) return;
+        if (!consoleEnabled || level != Level.VERBOSE) return;
         logger.info("[audit] event=load session=" + s.getSessionId() + " owner=" + s.getOwnerUuid()
                 + " vault=" + s.getVaultId() + " duration_ms=" + durationMs);
     }

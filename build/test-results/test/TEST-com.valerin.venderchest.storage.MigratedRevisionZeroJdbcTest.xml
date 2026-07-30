@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.valerin.venderchest.storage.MigratedRevisionZeroJdbcTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-07-28T03:09:40.379Z" hostname="MTYN-LAPTOP" time="0.061">
-  <properties/>
-  <testcase name="absentRowStillUsesRevisionOneOnFirstSave()" classname="com.valerin.venderchest.storage.MigratedRevisionZeroJdbcTest" time="0.026"/>
-  <testcase name="existingPreRevisionRowCanBeSavedExactlyOnce()" classname="com.valerin.venderchest.storage.MigratedRevisionZeroJdbcTest" time="0.034"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

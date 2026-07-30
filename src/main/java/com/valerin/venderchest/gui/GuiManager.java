@@ -5,6 +5,10 @@ import com.valerin.venderchest.api.CloseReason;
 import com.valerin.venderchest.config.ConfigManager;
 import com.valerin.venderchest.model.OpenSession;
 import com.valerin.venderchest.session.CommitOutcome;
+import com.valerin.venderchest.session.BukkitItemSnapshot;
+import com.valerin.venderchest.session.ItemBalanceDelta;
+import com.valerin.venderchest.session.ItemBalanceDeltaEngine;
+import com.valerin.venderchest.session.ItemSnapshot;
 import com.valerin.venderchest.session.OpenAttempt;
 import com.valerin.venderchest.session.SessionState;
 import com.valerin.venderchest.session.VaultKey;
@@ -126,7 +130,7 @@ public class GuiManager {
         closeCurrentVaultThenRun(admin, false, () -> {
             int maxPages = config.getMaxPages();
             VaultKey key = new VaultKey(targetUuid, String.valueOf(page));
-            Storage.PageRecord cached = contentCache.get(key);
+            Storage.PageRecord cached = cachedPage(key);
             if (cached != null) {
                 openReadOnlyAdminView(admin, targetUuid, targetName, page, maxPages, cached);
                 return;
@@ -134,8 +138,8 @@ public class GuiManager {
             plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
                 Storage.PageRecord record = storage.loadPageWithRevision(targetUuid, page);
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
-                    contentCache.put(key, record);
-                    openReadOnlyAdminView(admin, targetUuid, targetName, page, maxPages, record);
+                    Storage.PageRecord latest = cacheLatest(key, record);
+                    openReadOnlyAdminView(admin, targetUuid, targetName, page, maxPages, latest);
                 });
             });
         });
@@ -199,6 +203,15 @@ public class GuiManager {
                         actor.sendMessage(config.msg("vault-busy"));
                         return;
                     }
+                    if (outcome == CommitOutcome.CONFLICT) {
+                        boolean rolledBack = rollbackRejectedTransfer(
+                                actor, bukkitSide.getOriginalSnapshot(), currentContent);
+                        actor.sendMessage(config.msg("vault-conflict-reverted"));
+                        if (!rolledBack) {
+                            finishReopen(actor, bukkitSide, prev);
+                            return;
+                        }
+                    }
                     finishReopen(actor, bukkitSide, prev);
                     retry.run();
                 });
@@ -214,7 +227,7 @@ public class GuiManager {
     private void proceedToLoad(Player actor, VaultSession session, String ownerName, int page, boolean adminView) {
         UUID ownerUuid = session.getOwnerUuid();
         VaultKey key = new VaultKey(ownerUuid, session.getVaultId());
-        Storage.PageRecord cached = contentCache.get(key);
+        Storage.PageRecord cached = cachedPage(key);
         if (cached != null) {
             applyLoadedRecord(actor, session, ownerName, page, adminView, cached);
             return;
@@ -222,8 +235,7 @@ public class GuiManager {
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             Storage.PageRecord record = storage.loadPageWithRevision(ownerUuid, page);
             plugin.getServer().getScheduler().runTask(plugin, () -> {
-                contentCache.put(key, record);
-                applyLoadedRecord(actor, session, ownerName, page, adminView, record);
+                applyLoadedRecord(actor, session, ownerName, page, adminView, cacheLatest(key, record));
             });
         });
     }
@@ -537,6 +549,15 @@ public class GuiManager {
                 actor.sendMessage(config.msg("vault-busy"));
                 return;
             }
+            if (outcome == CommitOutcome.CONFLICT) {
+                boolean rolledBack = rollbackRejectedTransfer(
+                        actor, current.getOriginalSnapshot(), currentContent);
+                actor.sendMessage(config.msg("vault-conflict-reverted"));
+                if (!rolledBack) {
+                    finishReopen(actor, current, vs);
+                    return;
+                }
+            }
             finishReopen(actor, current, vs);
             continuation.run();
         });
@@ -582,6 +603,13 @@ public class GuiManager {
         txService.commitIfActive(vs, session.getOriginalSnapshot(), currentContent, outcome -> {
             applyCommitOutcome(vs, outcome, currentContent);
             if (outcome != CommitOutcome.NOT_OWNED) {
+                if (outcome == CommitOutcome.CONFLICT) {
+                    Player player = plugin.getServer().getPlayer(uuid);
+                    if (player != null) {
+                        rollbackRejectedTransfer(player, session.getOriginalSnapshot(), currentContent);
+                        player.sendMessage(config.msg("vault-conflict-reverted"));
+                    }
+                }
                 openByPlayer.remove(uuid, session);
                 registry.close(vs.getSessionId());
                 txService.fireClosed(vs, CloseReason.CLIENT_CLOSE);
@@ -610,9 +638,13 @@ public class GuiManager {
                 }
                 // CONFLICT: another writer moved the revision past what this session knew about -
                 // discard the local session and kick rather than keep editing against stale data.
+                Player actor = plugin.getServer().getPlayer(actorUuid);
+                if (actor != null) {
+                    rollbackRejectedTransfer(actor, s.getOriginalSnapshot(), currentContent);
+                    actor.sendMessage(config.msg("vault-conflict-reverted"));
+                }
                 registry.close(vs.getSessionId());
                 txService.fireClosed(vs, CloseReason.CONFLICT);
-                Player actor = plugin.getServer().getPlayer(actorUuid);
                 if (actor != null) actor.closeInventory();
                 openByPlayer.remove(actorUuid, s);
             });
@@ -742,10 +774,23 @@ public class GuiManager {
     private void applyCommitOutcome(VaultSession session, CommitOutcome outcome, ItemStack[] content) {
         VaultKey key = new VaultKey(session.getOwnerUuid(), session.getVaultId());
         switch (outcome) {
-            case COMMITTED, NO_CHANGE -> contentCache.put(key, new Storage.PageRecord(cloneArray(content), session.getCurrentRevision()));
+            case COMMITTED, NO_CHANGE ->
+                    cacheLatest(key, new Storage.PageRecord(cloneArray(content), session.getCurrentRevision()));
             case CONFLICT -> contentCache.remove(key);
             case NOT_OWNED -> { /* the owning caller will update the cache when its own commit settles */ }
         }
+    }
+
+    Storage.PageRecord cacheLatest(VaultKey key, Storage.PageRecord candidate) {
+        return contentCache.compute(key, (ignored, current) -> preferNewestRevision(current, candidate));
+    }
+
+    Storage.PageRecord cachedPage(VaultKey key) {
+        return contentCache.get(key);
+    }
+
+    static Storage.PageRecord preferNewestRevision(Storage.PageRecord current, Storage.PageRecord candidate) {
+        return current == null || candidate.revision() > current.revision() ? candidate : current;
     }
 
     /**
@@ -755,6 +800,86 @@ public class GuiManager {
      */
     public void invalidateCache(UUID owner, int page) {
         contentCache.remove(new VaultKey(owner, String.valueOf(page)));
+    }
+
+    /**
+     * A rejected CAS means the database still owns the original vault content. Undo only the net
+     * transfer between vault and player; moves between vault slots cancel out to zero.
+     */
+    private boolean rollbackRejectedTransfer(Player player, ItemStack[] before, ItemStack[] after) {
+        List<ItemBalanceDelta> deltas = ItemBalanceDeltaEngine.between(toSnapshots(before), toSnapshots(after));
+        boolean complete = true;
+        for (ItemBalanceDelta delta : deltas) {
+            ItemStack source = delta.gainedByVault() ? after[delta.sourceSlot()] : before[delta.sourceSlot()];
+            if (delta.gainedByVault()) {
+                returnToPlayer(player, source, delta.amount());
+            } else if (!removeFromPlayer(player, source, delta.amount())) {
+                complete = false;
+            }
+        }
+        player.updateInventory();
+        if (!complete) {
+            plugin.getLogger().severe("[vEnderchest] [audit] event=conflict_rollback_incomplete actor="
+                    + player.getUniqueId());
+        }
+        return complete;
+    }
+
+    private void returnToPlayer(Player player, ItemStack source, int amount) {
+        int remaining = amount;
+        int maxStack = Math.max(1, source.getMaxStackSize());
+        while (remaining > 0) {
+            ItemStack returned = source.clone();
+            returned.setAmount(Math.min(remaining, maxStack));
+            Map<Integer, ItemStack> leftovers = player.getInventory().addItem(returned);
+            leftovers.values().forEach(item ->
+                    player.getWorld().dropItemNaturally(player.getLocation(), item));
+            remaining -= returned.getAmount();
+        }
+    }
+
+    private boolean removeFromPlayer(Player player, ItemStack source, int amount) {
+        int remaining = removeFromCursor(player, source, amount);
+        ItemStack[] storage = player.getInventory().getStorageContents();
+        for (int slot = 0; slot < storage.length && remaining > 0; slot++) {
+            ItemStack item = storage[slot];
+            if (item == null || !item.isSimilar(source)) {
+                continue;
+            }
+            int removed = Math.min(remaining, item.getAmount());
+            item.setAmount(item.getAmount() - removed);
+            player.getInventory().setItem(slot, item.getAmount() == 0 ? null : item);
+            remaining -= removed;
+        }
+        if (remaining > 0) {
+            ItemStack offhand = player.getInventory().getItemInOffHand();
+            if (offhand.isSimilar(source)) {
+                int removed = Math.min(remaining, offhand.getAmount());
+                offhand.setAmount(offhand.getAmount() - removed);
+                player.getInventory().setItemInOffHand(offhand.getAmount() == 0 ? null : offhand);
+                remaining -= removed;
+            }
+        }
+        return remaining == 0;
+    }
+
+    private int removeFromCursor(Player player, ItemStack source, int amount) {
+        ItemStack cursor = player.getItemOnCursor();
+        if (cursor == null || !cursor.isSimilar(source)) {
+            return amount;
+        }
+        int removed = Math.min(amount, cursor.getAmount());
+        cursor.setAmount(cursor.getAmount() - removed);
+        player.setItemOnCursor(cursor.getAmount() == 0 ? null : cursor);
+        return amount - removed;
+    }
+
+    private static ItemSnapshot[] toSnapshots(ItemStack[] items) {
+        ItemSnapshot[] snapshots = new ItemSnapshot[items.length];
+        for (int i = 0; i < items.length; i++) {
+            snapshots[i] = BukkitItemSnapshot.of(items[i]);
+        }
+        return snapshots;
     }
 
     private static ItemStack[] cloneArray(ItemStack[] items) {

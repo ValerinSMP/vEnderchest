@@ -9,17 +9,25 @@ softdepend:
   - PlaceholderAPI
 
 commands:
+  venderchest:
+    description: Información principal de vEnderchest
+    usage: /venderchest <help|about>
+    aliases: [vec]
   ec:
     description: Abre tu enderchest extendido
     usage: /ec [página]
     aliases: [enderchest, pv, playervaults, vault, vaults]
     permission: venderchest.use
-  ecadmin:
+  venderchestadmin:
     description: Administración de enderchests
-    usage: /ecadmin <view|clear|reload> [jugador] [página]
+    usage: /venderchestadmin <help|view|clear|reload> [jugador] [página]
+    aliases: [ecadmin, pvadmin, echestadmin, enderchestadmin]
     permission: venderchest.admin
 
 permissions:
+  venderchest.command:
+    description: Permite usar el comando informativo de vEnderchest
+    default: true
   venderchest.use:
     description: Acceso básico al enderchest extendido
     default: op
@@ -27,7 +35,7 @@ permissions:
     description: Abre el enderchest vanilla real ignorando vEnderchest
     default: op
   venderchest.admin:
-    description: Todos los comandos de administración /ecadmin (implica view y edit)
+    description: Todos los comandos de administración de /venderchestadmin (implica view y edit)
     default: op
     children:
       venderchest.admin.view: true

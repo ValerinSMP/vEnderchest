@@ -52,6 +52,15 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
         }
 
         return switch (args[0].toLowerCase()) {
+            case "help", "ayuda", "?" -> {
+                config.getMessageService().sendLines(sender, "commands.admin-help.lines");
+                yield true;
+            }
+            case "about", "info", "acerca" -> {
+                config.getMessageService().sendLines(sender, "commands.about.lines",
+                        Placeholder.unparsed("version", plugin.getPluginMeta().getVersion()));
+                yield true;
+            }
             case "reload" -> {
                 plugin.reload();
                 sender.sendMessage(config.msg("config-reloaded"));
@@ -193,7 +202,7 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
         // /ecadmin migrate reset <player> <vanilla|axvaults>
         if (args.length < 2) {
             sender.sendMessage(config.getMM().deserialize(
-                    "<gray>Uso: <white>/ecadmin migrate <status|reset> <jugador> [vanilla|axvaults]"));
+                    "<gray>Uso: <white>/venderchestadmin migrate <status|reset> <jugador> [vanilla|axvaults]"));
             return true;
         }
 
@@ -266,7 +275,7 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
     private boolean handleRestore(CommandSender sender, String[] args) {
         if (args.length < 2) {
             sender.sendMessage(config.getMM().deserialize(
-                    "<gray>Uso: <white>/ecadmin restore <jugador> [id] [confirm]"));
+                    "<gray>Uso: <white>/venderchestadmin restore <jugador> [id] [confirm]"));
             return true;
         }
 
@@ -327,7 +336,7 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
                                     + " <dark_gray>· " + RelativeTime.since(b.createdAtMillis())));
                 }
                 sender.sendMessage(config.getMM().deserialize(
-                        "<gray>Usa <white>/ecadmin restore " + targetName + " <id> confirm</white> para restaurar."));
+                        "<gray>Usa <white>/venderchestadmin restore " + targetName + " <id> confirm</white> para restaurar."));
             });
         });
     }
@@ -371,14 +380,14 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
 
     private void sendUsage(CommandSender sender) {
         sender.sendMessage(config.getMM().deserialize(
-                "<gray>Uso: <white>/ecadmin <view|clear|reload|addvault|removevault|migrate|restore> [jugador] [args]"));
+                "<gray>Uso: <white>/venderchestadmin <view|clear|reload|addvault|removevault|migrate|restore> [jugador] [args]"));
     }
 
     @Override
     public @Nullable List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
                                                 @NotNull String label, @NotNull String[] args) {
         if (args.length == 1) {
-            return List.of("view", "clear", "reload", "addvault", "removevault", "migrate", "restore").stream()
+            return List.of("help", "about", "view", "clear", "reload", "addvault", "removevault", "migrate", "restore").stream()
                     .filter(s -> s.startsWith(args[0].toLowerCase())).toList();
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("migrate")) {

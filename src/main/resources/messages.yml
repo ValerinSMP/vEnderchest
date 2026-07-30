@@ -1,12 +1,70 @@
-prefix: "<dark_gray>[</dark_gray><dark_purple>ᴇɴᴅᴇʀᴄʜᴇsᴛ</dark_purple><dark_gray>]</dark_gray> <reset>"
+style:
+  prefix: "<dark_gray>[</dark_gray><primary>ᴇɴᴅᴇʀᴄʜᴇѕᴛ</primary><dark_gray>]</dark_gray> "
+  colors:
+    primary: "#a970ff"
+    secondary: "#d6b8ff"
+    muted: "#8f8f8f"
+    success: "#64d98b"
+    warning: "#ffd166"
+    error: "#ff6b6b"
+  emojis:
+    info: "ⓘ"
+    success: "✔"
+    warning: "⚠"
+    error: "✘"
+    arrow: "➜"
+    chest: "▣"
 
-no-permission: "<red>No tienes permiso para hacer esto."
-players-only: "<red>Este comando es solo para jugadores."
-page-out-of-range: "<red>Página <white><page></white> no existe. Máximo: <white><max></white>."
-page-locked: "<red>No tienes acceso a la página <white><page></white>."
-player-not-found: "<red>Jugador <white><player></white> no encontrado."
-admin-viewing: "<gray>Viendo enderchest de <white><player></white> <gray>(página <white><page></white>)."
-admin-cleared: "<green>Página <white><page></white> de <white><player></white> limpiada."
-config-reloaded: "<green>Configuración recargada."
-item-blacklisted: "<red>Ese ítem no puede guardarse en el enderchest."
-vault-busy: "<red>Este enderchest está siendo usado en otro lugar ahora mismo. Intenta de nuevo en unos segundos."
+no-permission: "<prefix><emoji:error> <error>No tienes permiso para hacer esto."
+players-only: "<prefix><emoji:error> <error>Este comando es solo para jugadores."
+page-out-of-range: "<prefix><emoji:error> <error>La página <secondary><page></secondary> no existe. Máximo: <secondary><max></secondary>."
+page-locked: "<prefix><emoji:error> <error>No tienes acceso a la página <secondary><page></secondary>."
+player-not-found: "<prefix><emoji:error> <error>Jugador <secondary><player></secondary> no encontrado."
+admin-viewing: "<prefix><emoji:info> <muted>Viendo el enderchest de <secondary><player></secondary> <muted>(página <secondary><page></secondary>)."
+admin-cleared: "<prefix><emoji:success> <success>Página <secondary><page></secondary> de <secondary><player></secondary> limpiada."
+config-reloaded: "<prefix><emoji:success> <success>Configuración y mensajes recargados."
+item-blacklisted: "<prefix><emoji:error> <error>Ese ítem no puede guardarse en el enderchest."
+vault-busy: "<prefix><emoji:warning> <warning>Este enderchest está siendo usado en otro lugar. Intenta nuevamente en unos segundos."
+vault-conflict-reverted: "<prefix><emoji:warning> <warning>El enderchest cambió en otro lugar. La transferencia fue revertida para evitar duplicaciones."
+
+commands:
+  unknown: "<prefix><emoji:error> <error>Subcomando desconocido: <secondary><command></secondary>. <click:suggest_command:'/venderchest help'><hover:show_text:'<muted>Haz click para ver la ayuda.'><primary>Usa /venderchest help</primary></hover></click>."
+  help:
+    header:
+      - ""
+      - "<primary><bold>vEnderchest</bold></primary> <dark_gray>•</dark_gray> <secondary>Comandos disponibles</secondary>"
+      - "<muted>Pasa el cursor sobre un comando para ver más información.</muted>"
+      - ""
+    user:
+      - "<emoji:arrow> <click:suggest_command:'/ec '><hover:show_text:'<secondary>Abre tu enderchest o una página específica.</secondary><newline><muted>Ejemplo: /ec 2</muted>'><primary>/ec [página]</primary></hover></click> <dark_gray>—</dark_gray> <muted>Abre tu enderchest.</muted>"
+      - "<emoji:arrow> <click:run_command:'/venderchest about'><hover:show_text:'<secondary>Muestra versión, autor y plataforma.</secondary>'><primary>/venderchest about</primary></hover></click> <dark_gray>—</dark_gray> <muted>Información del plugin.</muted>"
+    admin:
+      - "<emoji:arrow> <click:suggest_command:'/venderchestadmin '><hover:show_text:'<secondary>Administración de vaults, migraciones y backups.</secondary>'><primary>/venderchestadmin</primary></hover></click> <dark_gray>—</dark_gray> <muted>Herramientas administrativas.</muted>"
+      - "<emoji:arrow> <click:run_command:'/venderchestadmin reload'><hover:show_text:'<warning>Cierra las sesiones abiertas y recarga la configuración.</warning>'><primary>/venderchestadmin reload</primary></hover></click> <dark_gray>—</dark_gray> <muted>Recarga segura.</muted>"
+    footer:
+      - ""
+  admin-help:
+    lines:
+      - ""
+      - "<primary><bold>vEnderchest Admin</bold></primary> <dark_gray>•</dark_gray> <secondary>Comandos</secondary>"
+      - ""
+      - "<emoji:arrow> <click:suggest_command:'/venderchestadmin view '><hover:show_text:'<secondary>Abre un vault ajeno en modo lectura o edición.</secondary>'><primary>/venderchestadmin view <jugador> [página]</primary></hover></click>"
+      - "<emoji:arrow> <click:suggest_command:'/venderchestadmin clear '><hover:show_text:'<error>Limpia una página del vault indicado.</error>'><primary>/venderchestadmin clear <jugador> [página]</primary></hover></click>"
+      - "<emoji:arrow> <click:suggest_command:'/venderchestadmin addvault '><hover:show_text:'<secondary>Añade páginas extra a un jugador.</secondary>'><primary>/venderchestadmin addvault <jugador> <cantidad></primary></hover></click>"
+      - "<emoji:arrow> <click:suggest_command:'/venderchestadmin removevault '><hover:show_text:'<secondary>Retira páginas extra a un jugador.</secondary>'><primary>/venderchestadmin removevault <jugador> <cantidad></primary></hover></click>"
+      - "<emoji:arrow> <click:suggest_command:'/venderchestadmin migrate '><hover:show_text:'<secondary>Consulta o reinicia migraciones.</secondary>'><primary>/venderchestadmin migrate</primary></hover></click>"
+      - "<emoji:arrow> <click:suggest_command:'/venderchestadmin restore '><hover:show_text:'<warning>Lista, previsualiza o restaura backups.</warning>'><primary>/venderchestadmin restore <jugador></primary></hover></click>"
+      - "<emoji:arrow> <click:run_command:'/venderchestadmin reload'><hover:show_text:'<warning>Recarga configuración y mensajes.</warning>'><primary>/venderchestadmin reload</primary></hover></click>"
+      - ""
+      - "<muted><emoji:chest> ValerinSMP</muted>"
+      - ""
+  about:
+    lines:
+      - ""
+      - "<primary><bold>vEnderchest</bold></primary> <dark_gray>•</dark_gray> <secondary>v<version></secondary>"
+      - "<muted>Enderchests multi-página, persistentes y seguros.</muted>"
+      - ""
+      - "<emoji:info> <muted>Autor:</muted> <secondary>ValerinSMP</secondary>"
+      - "<emoji:info> <muted>Plataforma:</muted> <secondary>Paper 1.21.11+</secondary>"
+      - "<emoji:info> <click:open_url:'https://github.com/ValerinSMP/vEnderchest'><hover:show_text:'<secondary>Abrir el repositorio en GitHub.</secondary>'><primary><underlined>github.com/ValerinSMP/vEnderchest</underlined></primary></hover></click>"
+      - ""

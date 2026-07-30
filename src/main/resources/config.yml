@@ -17,6 +17,11 @@ database:
 # Ítems que no pueden guardarse en el enderchest
 blacklist: []
 
+# Controla únicamente la salida estructurada [audit] en consola. No desactiva la protección
+# anti-dupe, los eventos de la API, la persistencia ni la resolución interna de conflictos.
+audit:
+  console-enabled: true
+
 # Protección contra duplicación y observabilidad forense (para integración futura con vAntiDupe).
 # La protección en sí (serialización de sesiones + revisión optimista) SIEMPRE está activa y NO
 # tiene interruptor aquí: estas opciones solo controlan identificación y nivel de logging.
@@ -34,7 +39,7 @@ vantidupe:
   warn-console-on-conflict: true
 
 # Backups automáticos: cada vez que un vault se guarda con cambios reales, se guarda además una
-# copia con su revisión. Se puede ver y restaurar con /ecadmin restore <jugador> [id] [confirm].
+# copia con su revisión. Se puede ver y restaurar con /venderchestadmin restore <jugador> [id] [confirm].
 backups:
   enabled: true
   # Cuántas copias se conservan por página de vault; las más viejas se borran automáticamente.

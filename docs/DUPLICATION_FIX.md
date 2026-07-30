@@ -109,13 +109,13 @@ distribuido completo. Un `VaultConflictEvent` informa el diff intentado para que
 
 ### Corrección para filas migradas con revisión 0
 
-Las instalaciones anteriores reciben `revision = 0` al añadir la columna. La versión 1.1.0
+Las instalaciones anteriores reciben `revision = 0` al añadir la columna. Una implementación anterior
 confundía esas filas existentes con páginas todavía inexistentes e intentaba únicamente un
 `INSERT`, que fallaba por la clave primaria y producía `STALE_REVISION 0→0`. Como el objeto ya
 había llegado al inventario del jugador, omitir ese guardado permitía que reapareciera al abrir
 otra vez el vault.
 
-Desde 1.1.1, un guardado basado en revisión 0 primero ejecuta un `UPDATE ... WHERE revision = 0`;
+En el baseline 1.0.0, un guardado basado en revisión 0 primero ejecuta un `UPDATE ... WHERE revision = 0`;
 si no existe esa fila, intenta el `INSERT` inicial. Ambos caminos son atómicos: una sola escritura
 puede avanzar a revisión 1. `MigratedRevisionZeroJdbcTest` reproduce una base pre-revisión real y
 comprueba también que un segundo intento obsoleto es rechazado.
@@ -164,3 +164,19 @@ Hasta implementar un lease/bloqueo distribuido o commits por operación antes de
 objeto, un mismo vault no debe abrirse en modo escritura simultáneamente desde dos servidores que
 compartan MySQL. El revision CAS permanece activo como protección de integridad y señal forense,
 pero un conflicto CAS debe tratarse como posible duplicación y revisarse mediante vAntiDupe.
+
+## Reversión de transferencias rechazadas
+
+Un conflicto CAS conserva correctamente la página persistida, pero el cliente puede haber movido
+ya un objeto entre el vault y su inventario. Antes de esta corrección, la navegación continuaba:
+un retiro rechazado podía permanecer en la página original y luego depositarse en otra página.
+
+Ahora el servidor calcula el balance neto por tipo exacto de objeto. Ante conflicto:
+
+- retira del jugador cualquier cantidad cuyo retiro no se confirmó;
+- devuelve al jugador cualquier depósito que no se confirmó;
+- ignora movimientos internos entre slots, cuyo balance neto es cero;
+- no abre la página siguiente si la reversión no pudo completarse.
+
+También se bloquea soltar objetos desde el cursor o desde el vault mientras la sesión está abierta,
+manteniendo todo lo necesario para una posible reversión dentro de inventarios controlables.

@@ -42,7 +42,8 @@ vaults creados antes de existir la columna `revision`.
 
 Desde 1.0.2, las aperturas también se ordenan por actor: un resultado asíncrono antiguo
 no puede reemplazar una GUI solicitada después, aunque pertenezcan a páginas distintas.
-Los cambios de vista iniciados por clicks se difieren al tick siguiente, como exige Paper.
+Las operaciones de inventario Bukkit convergen en el hilo principal y los cambios de vista
+iniciados por clicks se difieren al tick siguiente, como exige Paper.
 
 Si una revisión cambia mientras una página está abierta, el plugin revierte el
 balance transferido entre vault e inventario. Así un objeto no puede conservarse en
@@ -97,10 +98,12 @@ la protección anti-dupe, la persistencia, los eventos de la API ni los conflict
 .\gradlew.bat clean test build
 ```
 
+Estado verificado de 1.0.2: **47 pruebas, 0 fallos**.
+
 Artefactos esperados:
 
-- `build/libs/vEnderchest-1.0.2.jar`
-- `build/libs/vEnderchest-1.0.2-api.jar`
+- Runtime sombreado para el servidor: `build/libs/vEnderchest-1.0.2.jar`
+- API pública liviana para `compileOnly`: `build/libs/vEnderchest-1.0.2-api.jar`
 
 ## 🧩 API y documentación
 

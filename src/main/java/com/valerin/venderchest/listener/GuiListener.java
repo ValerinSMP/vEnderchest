@@ -38,7 +38,13 @@ public class GuiListener implements Listener {
             event.setCancelled(true);
             int rawSlot = event.getRawSlot();
             if (rawSlot >= 0 && rawSlot < topInv.getSize()) {
-                guiManager.handleBackupBrowseClick(player, rawSlot);
+                guiManager.runNextTick(() -> {
+                    if (player.isOnline()
+                            && player.getOpenInventory().getTopInventory().equals(topInv)
+                            && guiManager.isBackupBrowseInventory(player, topInv)) {
+                        guiManager.handleBackupBrowseClick(player, rawSlot);
+                    }
+                });
             }
             return;
         }
@@ -84,7 +90,7 @@ public class GuiListener implements Listener {
 
             // Close button
             if (rawSlot == guiManager.getMainMenuGui().getCloseSlot()) {
-                player.closeInventory();
+                runNextTickIfStillOpen(player, session, player::closeInventory);
                 return;
             }
 
@@ -98,7 +104,7 @@ public class GuiListener implements Listener {
                         Placeholder.unparsed("page", String.valueOf(page))));
                 return;
             }
-            guiManager.openPage(player, page);
+            runNextTickIfStillOpen(player, session, () -> guiManager.openPage(player, page));
             return;
         }
 
@@ -107,7 +113,7 @@ public class GuiListener implements Listener {
         // Nav row (slots 45-53): always block
         if (clickedTop && EnderchestGui.NAV_SLOTS.contains(rawSlot)) {
             event.setCancelled(true);
-            handleNavClick(player, session, rawSlot);
+            runNextTickIfStillOpen(player, session, () -> handleNavClick(player, session, rawSlot));
             return;
         }
 
@@ -264,6 +270,16 @@ public class GuiListener implements Listener {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+
+    private void runNextTickIfStillOpen(Player player, OpenSession expected, Runnable action) {
+        guiManager.runNextTick(() -> {
+            if (player.isOnline()
+                    && guiManager.getSession(player.getUniqueId()) == expected
+                    && player.getOpenInventory().getTopInventory().equals(expected.getInventory())) {
+                action.run();
+            }
+        });
+    }
 
     private void handleNavClick(Player player, OpenSession session, int slot) {
         var navCfg = config.getGuiEnderchest().getConfigurationSection("navigation");

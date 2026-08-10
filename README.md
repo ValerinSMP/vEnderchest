@@ -6,7 +6,7 @@
 
 [![Paper](https://img.shields.io/badge/Paper-1.21.11%2B-222222?style=for-the-badge)](https://papermc.io/)
 [![Java](https://img.shields.io/badge/Java-21-E76F00?style=for-the-badge&logo=openjdk&logoColor=white)](https://adoptium.net/)
-[![Version](https://img.shields.io/badge/version-1.0.0-7B5CFA?style=for-the-badge)](https://github.com/ValerinSMP/vEnderchest)
+[![Version](https://img.shields.io/badge/version-1.0.2-7B5CFA?style=for-the-badge)](https://github.com/ValerinSMP/vEnderchest)
 
 </div>
 
@@ -39,6 +39,10 @@ MINOR y los cambios incompatibles incrementan MAJOR.
 
 El baseline 1.0.0 incorpora revisiones CAS, sesiones controladas y una corrección para
 vaults creados antes de existir la columna `revision`.
+
+Desde 1.0.2, las aperturas también se ordenan por actor: un resultado asíncrono antiguo
+no puede reemplazar una GUI solicitada después, aunque pertenezcan a páginas distintas.
+Los cambios de vista iniciados por clicks se difieren al tick siguiente, como exige Paper.
 
 Si una revisión cambia mientras una página está abierta, el plugin revierte el
 balance transferido entre vault e inventario. Así un objeto no puede conservarse en
@@ -75,7 +79,7 @@ Dependencia opcional:
 
 ## 📦 Instalación
 
-1. Compila o descarga `vEnderchest-1.0.0.jar`.
+1. Compila o descarga `vEnderchest-1.0.2.jar`.
 2. Copia el jar dentro de `plugins/`.
 3. Inicia Paper para generar la configuración.
 4. Selecciona y configura SQLite o MySQL.
@@ -95,8 +99,8 @@ la protección anti-dupe, la persistencia, los eventos de la API ni los conflict
 
 Artefactos esperados:
 
-- `build/libs/vEnderchest-1.0.0.jar`
-- `build/libs/vEnderchest-1.0.0-api.jar`
+- `build/libs/vEnderchest-1.0.2.jar`
+- `build/libs/vEnderchest-1.0.2-api.jar`
 
 ## 🧩 API y documentación
 

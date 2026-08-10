@@ -125,7 +125,10 @@ public class EnderchestGui {
 
     public static ItemStack[] extractContent(Inventory inv) {
         ItemStack[] content = new ItemStack[45];
-        for (int i = 0; i < 45; i++) content[i] = inv.getItem(i);
+        for (int i = 0; i < 45; i++) {
+            ItemStack item = inv.getItem(i);
+            content[i] = item == null ? null : item.clone();
+        }
         return content;
     }
 }

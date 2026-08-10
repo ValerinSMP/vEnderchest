@@ -77,6 +77,38 @@ the server commits the first session (persisting the take) **before** it ever st
 second one. The second session is only ever allowed to load *after* that commit is durably
 confirmed, so it can never render a copy of an item that was already removed.
 
+### Actor-wide open ordering (1.0.2)
+
+The vault-key registry serializes writers for one `(owner, page)`, but it does not by itself order
+two asynchronous GUI requests made by the same actor for different pages or menu types. A page-3
+load requested first could therefore complete after a newer page-2 request. The late completion
+could replace `openByPlayer` before `Player#openInventory` implicitly closed the current view;
+`InventoryCloseEvent` then saw the new mapping, rejected the old inventory by identity and skipped
+its commit. This was the same dangerous publication order as the original bug, reintroduced across
+different vault keys.
+
+Every top-level GUI request now receives a monotonically increasing actor sequence. The sequence is
+rechecked after main-thread dispatch and after every asynchronous load/commit wait; a stale result
+closes its reserved session and never builds or publishes a GUI. The new mapping is also installed
+only after `openInventory` has finished closing the previous view, so its close handler can still
+find and commit the old session. `GuiManagerMainThreadTest` deterministically completes the newer
+page-2 request before a delayed page-3 request and verifies that only page 2 is published.
+
+Paper also documents that view-changing methods such as `openInventory` and `closeInventory` must
+not run inside `InventoryClickEvent`. Navigation, home, close and backup-menu actions are therefore
+scheduled for the next tick and revalidate the expected session before acting. Captured vault
+content now clones each `ItemStack`, preventing a live inventory object from mutating an already
+recorded commit baseline.
+
+Forensic evidence from case `MSAJA93N7` (2026-08-01) showed a real withdrawal at revision 62→63:
+slot 22 helmet UID `69b10d0d-193f-4176-999a-e82d8e1ec8d1` and slot 25 boots UID
+`92906526-03c9-41b2-b635-a9c52648666d` were removed at 11:35:56 CLT. Revision 64 restored both
+byte-identical items at 11:36:38 and remained the current database state in the supplied archive.
+This proves reintroduction into the vault, but the database alone cannot distinguish an automatic
+stale GUI from a player redeposit; the vAntiDupe case audit/player-inventory timeline is required to
+attribute that individual 63→64 write. The actor-ordering race above is independently demonstrated
+by code and regression test, so the fix does not depend on overclaiming that attribution.
+
 ### Revision compare-and-swap
 
 `ec_pages` gained a `revision BIGINT NOT NULL DEFAULT 0` column (additive migration, see
@@ -126,6 +158,8 @@ comprueba también que un segundo intento obsoleto es rechazado.
 |---|---|
 | `/ec 1` twice while the first is still open | `closeCurrentVaultThenRun` self-heals from server state before opening anything new |
 | Two opens in the exact same tick | `VaultSessionRegistry`'s `Supersede` path, driven by session state, not client timing |
+| Delayed page/menu load finishes after a newer request | Actor-wide request sequence discards the stale completion before it can replace the tracked GUI |
+| Navigation button changes the open view | Action runs next tick, outside `InventoryClickEvent`, after revalidating the expected session |
 | GUI closed without a client packet | Every trigger (reopen, navigate, quit, kick, autosave, shutdown) commits independently; none of them depend on `InventoryCloseEvent` firing |
 | Click/drag durante commit o desde sesión antigua | `GuiManager.validateSessionOrReject` exige sesión `ACTIVE`, token de inventario idéntico y propiedad actual del vault |
 | Two async saves completing out of order | Revision CAS: only the save whose `expectedRevision` still matches can succeed |

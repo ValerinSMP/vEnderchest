@@ -16,6 +16,7 @@ import com.valerin.venderchest.session.VaultSession;
 import com.valerin.venderchest.session.VaultSessionRegistry;
 import com.valerin.venderchest.session.VaultTransactionService;
 import com.valerin.venderchest.storage.Storage;
+import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -24,6 +25,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 /**
  * Server-authoritative vault GUI orchestrator. Every open/close/navigate/autosave/quit/shutdown
@@ -48,11 +51,15 @@ public class GuiManager {
     private final BackupPreviewGui backupPreviewGui;
     private final VaultSessionRegistry registry;
     private final VaultTransactionService txService;
+    private final BooleanSupplier primaryThread;
+    private final Consumer<Runnable> mainThreadScheduler;
 
     /** Actor UUID -> what that actor's client currently has open. Main-thread only. */
     private final Map<UUID, OpenSession> openByPlayer = new ConcurrentHashMap<>();
     /** Actor UUID -> last opened page number. */
     private final Map<UUID, Integer> lastPage = new ConcurrentHashMap<>();
+    /** Actor UUID -> newest requested GUI. A late async completion may never replace it. */
+    private final Map<UUID, Long> openRequests = new ConcurrentHashMap<>();
     /**
      * Last known content+revision per vault, kept only while the owner is online (evicted on
      * disconnect, same lifetime AxVaults gives its in-memory {@code Vault} objects). A reopen that
@@ -67,11 +74,20 @@ public class GuiManager {
 
     public GuiManager(VEnderchest plugin, Storage storage, ConfigManager config,
                        VaultSessionRegistry registry, VaultTransactionService txService) {
+        this(plugin, storage, config, registry, txService, Bukkit::isPrimaryThread,
+                task -> plugin.getServer().getScheduler().runTask(plugin, task));
+    }
+
+    GuiManager(VEnderchest plugin, Storage storage, ConfigManager config,
+               VaultSessionRegistry registry, VaultTransactionService txService,
+               BooleanSupplier primaryThread, Consumer<Runnable> mainThreadScheduler) {
         this.plugin = plugin;
         this.storage = storage;
         this.config = config;
         this.registry = registry;
         this.txService = txService;
+        this.primaryThread = primaryThread;
+        this.mainThreadScheduler = mainThreadScheduler;
         this.mainMenuGui = new MainMenuGui(config);
         this.enderchestGui = new EnderchestGui(config);
         this.backupListGui = new BackupListGui(config);
@@ -81,15 +97,19 @@ public class GuiManager {
     // ── Opening ──────────────────────────────────────────────────────────────
 
     public void openMainMenu(Player player) {
+        runOnMainThread(() -> openMainMenuOnMain(player));
+    }
+
+    private void openMainMenuOnMain(Player player) {
         UUID uuid = player.getUniqueId();
-        closeCurrentVaultThenRun(player, false, () -> {
+        long request = beginOpenRequest(uuid);
+        closeCurrentVaultThenRun(player, false, request, () -> {
             plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
                 var itemCounts = storage.countPageItems(uuid);
-                plugin.getServer().getScheduler().runTask(plugin, () -> {
-                    if (!player.isOnline()) return;
+                runOnMainThread(() -> {
+                    if (!isCurrentOpenRequest(uuid, request) || !player.isOnline()) return;
                     Inventory inv = mainMenuGui.build(player, itemCounts);
-                    openByPlayer.put(uuid, OpenSession.mainMenu(inv));
-                    player.openInventory(inv);
+                    publishOpenSession(player, OpenSession.mainMenu(inv));
                     config.playSound(player, "open-menu");
                 });
             });
@@ -97,8 +117,14 @@ public class GuiManager {
     }
 
     public void openPage(Player player, int page) {
-        closeCurrentVaultThenRun(player, true,
-                () -> beginOpenAndLoad(player, player.getUniqueId(), null, page, false));
+        runOnMainThread(() -> openPageOnMain(player, page));
+    }
+
+    private void openPageOnMain(Player player, int page) {
+        UUID actorUuid = player.getUniqueId();
+        long request = beginOpenRequest(actorUuid);
+        closeCurrentVaultThenRun(player, true, request,
+                () -> beginOpenAndLoad(player, actorUuid, null, page, false, request));
     }
 
     /**
@@ -106,19 +132,28 @@ public class GuiManager {
      * @param readOnly true = solo lectura; false = editable
      */
     public void openPageAdmin(Player admin, UUID targetUuid, String targetName, int page, boolean readOnly) {
+        runOnMainThread(() -> openPageAdminOnMain(admin, targetUuid, targetName, page, readOnly));
+    }
+
+    private void openPageAdminOnMain(Player admin, UUID targetUuid, String targetName, int page, boolean readOnly) {
+        long request = beginOpenRequest(admin.getUniqueId());
         if (readOnly) {
-            openPageAdminReadOnly(admin, targetUuid, targetName, page);
+            openPageAdminReadOnly(admin, targetUuid, targetName, page, request);
             return;
         }
-        closeCurrentVaultThenRun(admin, true,
-                () -> beginOpenAndLoad(admin, targetUuid, targetName, page, true));
+        closeCurrentVaultThenRun(admin, true, request,
+                () -> beginOpenAndLoad(admin, targetUuid, targetName, page, true, request));
     }
 
     public void openLastPageOrDefault(Player player) {
+        runOnMainThread(() -> openLastPageOrDefaultOnMain(player));
+    }
+
+    private void openLastPageOrDefaultOnMain(Player player) {
         int page = lastPage.getOrDefault(player.getUniqueId(), 1);
         int maxPages = config.getMaxPages(player);
         if (page > maxPages) page = 1;
-        openPage(player, page);
+        openPageOnMain(player, page);
     }
 
     /**
@@ -126,18 +161,24 @@ public class GuiManager {
      * registry at all: {@link com.valerin.venderchest.listener.GuiListener} unconditionally blocks
      * every write to a read-only session's inventory, so there is nothing for them to duplicate.
      */
-    private void openPageAdminReadOnly(Player admin, UUID targetUuid, String targetName, int page) {
-        closeCurrentVaultThenRun(admin, false, () -> {
+    private void openPageAdminReadOnly(Player admin, UUID targetUuid, String targetName, int page, long request) {
+        UUID actorUuid = admin.getUniqueId();
+        closeCurrentVaultThenRun(admin, false, request, () -> {
             int maxPages = config.getMaxPages();
             VaultKey key = new VaultKey(targetUuid, String.valueOf(page));
             Storage.PageRecord cached = cachedPage(key);
             if (cached != null) {
-                openReadOnlyAdminView(admin, targetUuid, targetName, page, maxPages, cached);
+                runOnMainThread(() -> {
+                    if (isCurrentOpenRequest(actorUuid, request)) {
+                        openReadOnlyAdminView(admin, targetUuid, targetName, page, maxPages, cached);
+                    }
+                });
                 return;
             }
             plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
                 Storage.PageRecord record = storage.loadPageWithRevision(targetUuid, page);
-                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                runOnMainThread(() -> {
+                    if (!isCurrentOpenRequest(actorUuid, request)) return;
                     Storage.PageRecord latest = cacheLatest(key, record);
                     openReadOnlyAdminView(admin, targetUuid, targetName, page, maxPages, latest);
                 });
@@ -151,20 +192,23 @@ public class GuiManager {
         String title = adminTitle(targetName, true, page, maxPages);
         Inventory inv = enderchestGui.build(record.items(), page, maxPages, title);
         OpenSession session = OpenSession.adminPage(page, inv, true, targetUuid, targetName, null, null);
-        openByPlayer.put(admin.getUniqueId(), session);
-        admin.openInventory(inv);
+        publishOpenSession(admin, session);
     }
 
     /** Reserves the vault key and, once granted, loads and opens it. Handles all three {@link OpenAttempt} outcomes. */
-    private void beginOpenAndLoad(Player actor, UUID ownerUuid, String ownerName, int page, boolean adminView) {
+    private void beginOpenAndLoad(Player actor, UUID ownerUuid, String ownerName, int page,
+                                  boolean adminView, long request) {
+        UUID actorUuid = actor.getUniqueId();
+        if (!isCurrentOpenRequest(actorUuid, request)) return;
         String vaultId = String.valueOf(page);
-        OpenAttempt attempt = registry.beginOpen(ownerUuid, actor.getUniqueId(), vaultId);
+        OpenAttempt attempt = registry.beginOpen(ownerUuid, actorUuid, vaultId);
         if (attempt instanceof OpenAttempt.Created created) {
-            proceedToLoad(actor, created.session(), ownerName, page, adminView);
+            proceedToLoad(actor, created.session(), ownerName, page, adminView, request);
         } else if (attempt instanceof OpenAttempt.Supersede supersede) {
-            resolveSupersede(actor, supersede.previous(), () -> beginOpenAndLoad(actor, ownerUuid, ownerName, page, adminView));
+            resolveSupersede(actor, supersede.previous(), request,
+                    () -> beginOpenAndLoad(actor, ownerUuid, ownerName, page, adminView, request));
         } else if (attempt instanceof OpenAttempt.Rejected rejected) {
-            txService.fireConcurrentSessionConflict(ownerUuid, actor.getUniqueId(), vaultId, rejected.existing());
+            txService.fireConcurrentSessionConflict(ownerUuid, actorUuid, vaultId, rejected.existing());
             actor.sendMessage(config.msg("vault-busy"));
             config.playSound(actor, "denied");
         }
@@ -177,13 +221,14 @@ public class GuiManager {
      * first one's async load has completed. This is the authoritative fallback that makes the fix
      * correct regardless of timing, not just a defensive extra.
      */
-    private void resolveSupersede(Player actor, VaultSession prev, Runnable retry) {
+    private void resolveSupersede(Player actor, VaultSession prev, long request, Runnable retry) {
+        if (!isCurrentOpenRequest(actor.getUniqueId(), request)) return;
         switch (prev.getState()) {
             case OPENING -> {
                 // Nothing loaded yet, nothing to commit - free the key; the in-flight load's
                 // eventual activate() call will fail and be discarded (see proceedToLoad).
                 registry.close(prev.getSessionId());
-                retry.run();
+                runIfCurrentOpenRequest(actor.getUniqueId(), request, retry);
             }
             case ACTIVE -> {
                 OpenSession bukkitSide = openByPlayer.get(actor.getUniqueId());
@@ -192,7 +237,7 @@ public class GuiManager {
                     // rather than guess at content that might not belong to this actor's client.
                     registry.close(prev.getSessionId());
                     txService.fireClosed(prev, CloseReason.CONFLICT);
-                    retry.run();
+                    runIfCurrentOpenRequest(actor.getUniqueId(), request, retry);
                     return;
                 }
                 txService.fireSuspiciousReopen(prev);
@@ -213,35 +258,51 @@ public class GuiManager {
                         }
                     }
                     finishReopen(actor, bukkitSide, prev);
-                    retry.run();
+                    runIfCurrentOpenRequest(actor.getUniqueId(), request, retry);
                 });
             }
             default -> {
                 if (prev.getState() == SessionState.COMMITTING) {
-                    txService.afterCurrentCommit(prev, retry);
+                    txService.afterCurrentCommit(prev,
+                            () -> runIfCurrentOpenRequest(actor.getUniqueId(), request, retry));
                 }
             }
         }
     }
 
-    private void proceedToLoad(Player actor, VaultSession session, String ownerName, int page, boolean adminView) {
+    void proceedToLoad(Player actor, VaultSession session, String ownerName, int page,
+                       boolean adminView, long request) {
+        if (!isCurrentOpenRequest(actor.getUniqueId(), request)) {
+            registry.close(session.getSessionId());
+            return;
+        }
         UUID ownerUuid = session.getOwnerUuid();
         VaultKey key = new VaultKey(ownerUuid, session.getVaultId());
         Storage.PageRecord cached = cachedPage(key);
         if (cached != null) {
-            applyLoadedRecord(actor, session, ownerName, page, adminView, cached);
+            applyLoadedRecordOnMain(actor, session, ownerName, page, adminView, cached, request);
             return;
         }
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             Storage.PageRecord record = storage.loadPageWithRevision(ownerUuid, page);
-            plugin.getServer().getScheduler().runTask(plugin, () -> {
-                applyLoadedRecord(actor, session, ownerName, page, adminView, cacheLatest(key, record));
-            });
+            applyLoadedRecordOnMain(actor, session, ownerName, page, adminView, record, request);
         });
     }
 
-    private void applyLoadedRecord(Player actor, VaultSession session, String ownerName, int page,
-                                    boolean adminView, Storage.PageRecord record) {
+    void applyLoadedRecordOnMain(Player actor, VaultSession session, String ownerName, int page,
+                                 boolean adminView, Storage.PageRecord record, long request) {
+        runOnMainThread(() -> {
+            if (!isCurrentOpenRequest(actor.getUniqueId(), request)) {
+                registry.close(session.getSessionId());
+                return;
+            }
+            applyLoadedRecord(actor, session, ownerName, page, adminView,
+                    cacheLatest(new VaultKey(session.getOwnerUuid(), session.getVaultId()), record));
+        });
+    }
+
+    void applyLoadedRecord(Player actor, VaultSession session, String ownerName, int page,
+                           boolean adminView, Storage.PageRecord record) {
         if (!actor.isOnline()) {
             registry.close(session.getSessionId());
             return;
@@ -251,8 +312,8 @@ public class GuiManager {
         Inventory inv = enderchestGui.build(record.items(), page, maxPages, title);
 
         if (!registry.activate(session.getSessionId(), record.revision(), inv)) {
-            // Superseded/closed while this load was in flight - discard silently. This is
-            // what replaces the old best-effort "openSeq" counter with an authoritative check.
+            // Superseded/closed while this load was in flight - discard silently. The registry
+            // protects one vault key; the actor request guard above also orders different keys.
             return;
         }
 
@@ -260,9 +321,8 @@ public class GuiManager {
         OpenSession bukkitSession = adminView
                 ? OpenSession.adminPage(page, inv, false, session.getOwnerUuid(), ownerName, session, originalSnapshot)
                 : OpenSession.playerPage(page, inv, session, originalSnapshot);
-        openByPlayer.put(actor.getUniqueId(), bukkitSession);
+        publishOpenSession(actor, bukkitSession);
         lastPage.put(actor.getUniqueId(), page);
-        actor.openInventory(inv);
         txService.fireOpened(session);
         if (!adminView) config.playSound(actor, "open-page");
     }
@@ -282,14 +342,20 @@ public class GuiManager {
 
     /** Opens the paginated, clickable list of {@code targetUuid}'s stored backups. */
     public void openBackupList(Player admin, UUID targetUuid, String targetName) {
-        closeCurrentVaultThenRun(admin, false, () -> {
-            clearBackupBrowse(admin.getUniqueId());
+        runOnMainThread(() -> openBackupListOnMain(admin, targetUuid, targetName));
+    }
+
+    private void openBackupListOnMain(Player admin, UUID targetUuid, String targetName) {
+        UUID actorUuid = admin.getUniqueId();
+        long request = beginOpenRequest(actorUuid);
+        closeCurrentVaultThenRun(admin, false, request, () -> {
+            clearBackupBrowse(actorUuid);
             plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
                 List<Storage.BackupRecord> backups = storage.listBackups(targetUuid);
-                plugin.getServer().getScheduler().runTask(plugin, () -> {
-                    if (!admin.isOnline()) return;
+                runOnMainThread(() -> {
+                    if (!isCurrentOpenRequest(actorUuid, request) || !admin.isOnline()) return;
                     BackupBrowseState state = new BackupBrowseState(targetUuid, targetName, backups);
-                    backupBrowse.put(admin.getUniqueId(), state);
+                    backupBrowse.put(actorUuid, state);
                     showBackupList(admin, state);
                 });
             });
@@ -298,15 +364,21 @@ public class GuiManager {
 
     /** Opens a specific backup's preview directly by id (e.g. `/ecadmin restore <player> <id>`). */
     public void openBackupPreviewDirect(Player admin, UUID targetUuid, String targetName, int backupId) {
-        closeCurrentVaultThenRun(admin, false, () -> {
-            clearBackupBrowse(admin.getUniqueId());
+        runOnMainThread(() -> openBackupPreviewDirectOnMain(admin, targetUuid, targetName, backupId));
+    }
+
+    private void openBackupPreviewDirectOnMain(Player admin, UUID targetUuid, String targetName, int backupId) {
+        UUID actorUuid = admin.getUniqueId();
+        long request = beginOpenRequest(actorUuid);
+        closeCurrentVaultThenRun(admin, false, request, () -> {
+            clearBackupBrowse(actorUuid);
             plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
                 Storage.BackupRecord record = storage.getBackup(backupId);
                 ItemStack[] items = (record != null && record.uuid().equals(targetUuid))
                         ? storage.loadBackupItems(backupId) : null;
                 List<Storage.BackupRecord> backups = storage.listBackups(targetUuid);
-                plugin.getServer().getScheduler().runTask(plugin, () -> {
-                    if (!admin.isOnline()) return;
+                runOnMainThread(() -> {
+                    if (!isCurrentOpenRequest(actorUuid, request) || !admin.isOnline()) return;
                     if (record == null || !record.uuid().equals(targetUuid) || items == null) {
                         admin.sendMessage(config.getMM().deserialize(
                                 "<red>Ese backup no existe o no pertenece a " + targetName + "."));
@@ -318,7 +390,7 @@ public class GuiManager {
                     state.previewingBackupId = backupId;
                     state.previewingPage = record.page();
                     state.previewingItems = items;
-                    backupBrowse.put(admin.getUniqueId(), state);
+                    backupBrowse.put(actorUuid, state);
                     showBackupPreview(admin, state);
                 });
             });
@@ -380,7 +452,7 @@ public class GuiManager {
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             Storage.BackupRecord record = storage.getBackup(backupId);
             ItemStack[] items = record != null ? storage.loadBackupItems(backupId) : null;
-            plugin.getServer().getScheduler().runTask(plugin, () -> {
+            runOnMainThread(() -> {
                 // The admin may have navigated away (or logged off) while this load was in flight.
                 if (!admin.isOnline() || backupBrowse.get(admin.getUniqueId()) != state) return;
                 if (record == null || items == null) {
@@ -453,7 +525,7 @@ public class GuiManager {
 
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             storage.savePage(targetUuid, page, items);
-            plugin.getServer().getScheduler().runTask(plugin, () -> {
+            runOnMainThread(() -> {
                 invalidateCache(targetUuid, page);
                 plugin.getLogger().warning("[vEnderchest] [audit] event=restore backup=" + backupId
                         + " owner=" + targetUuid + " vault=" + page + " by=" + admin.getName());
@@ -483,19 +555,21 @@ public class GuiManager {
     // ── Navigation ───────────────────────────────────────────────────────────
 
     public void navigatePage(Player player, int page) {
+        runOnMainThread(() -> navigatePageOnMain(player, page));
+    }
+
+    private void navigatePageOnMain(Player player, int page) {
         config.playSound(player, "navigate");
         OpenSession current = openByPlayer.get(player.getUniqueId());
         boolean wasAdmin = current != null && current.isAdminView();
         UUID targetUuid = current != null ? current.getTargetUuid() : null;
         String targetName = current != null ? current.getTargetName() : null;
         boolean readOnly = current != null && current.isReadOnly();
-        closeCurrentVaultThenRun(player, false, () -> {
-            if (wasAdmin) {
-                openPageAdmin(player, targetUuid, targetName, page, readOnly);
-            } else {
-                beginOpenAndLoad(player, player.getUniqueId(), null, page, false);
-            }
-        });
+        if (wasAdmin) {
+            openPageAdminOnMain(player, targetUuid, targetName, page, readOnly);
+        } else {
+            openPageOnMain(player, page);
+        }
     }
 
     public void navigateToMainMenu(Player player) {
@@ -509,29 +583,31 @@ public class GuiManager {
      * even reach {@link #resolveSupersede}: it is driven entirely by server-side bookkeeping, not by
      * whether the client sent a close packet.
      */
-    private void closeCurrentVaultThenRun(Player actor, boolean suspiciousReopen, Runnable continuation) {
+    private void closeCurrentVaultThenRun(Player actor, boolean suspiciousReopen, long request,
+                                          Runnable continuation) {
         UUID actorUuid = actor.getUniqueId();
+        if (!isCurrentOpenRequest(actorUuid, request)) return;
         OpenSession current = openByPlayer.get(actorUuid);
         if (current == null) {
-            continuation.run();
+            runIfCurrentOpenRequest(actorUuid, request, continuation);
             return;
         }
         if (current.getVaultSession() == null) {
             actor.closeInventory();
             openByPlayer.remove(actorUuid, current);
-            continuation.run();
+            runIfCurrentOpenRequest(actorUuid, request, continuation);
             return;
         }
         VaultSession vs = current.getVaultSession();
         if (vs.getState() == SessionState.COMMITTING) {
             txService.afterCurrentCommit(vs,
-                    () -> closeCurrentVaultThenRun(actor, suspiciousReopen, continuation));
+                    () -> closeCurrentVaultThenRun(actor, suspiciousReopen, request, continuation));
             return;
         }
         if (vs.getState() == SessionState.CLOSED) {
             actor.closeInventory();
             openByPlayer.remove(actorUuid, current);
-            continuation.run();
+            runIfCurrentOpenRequest(actorUuid, request, continuation);
             return;
         }
         if (vs.getState() != SessionState.ACTIVE) {
@@ -559,7 +635,7 @@ public class GuiManager {
                 }
             }
             finishReopen(actor, current, vs);
-            continuation.run();
+            runIfCurrentOpenRequest(actorUuid, request, continuation);
         });
     }
 
@@ -659,6 +735,7 @@ public class GuiManager {
      * same session are safe no-ops.
      */
     public void handleDisconnect(UUID uuid, CloseReason reason) {
+        invalidateOpenRequests(uuid);
         // The owner is going offline - their cached content is only ever valid while they're
         // online (same lifetime AxVaults gives its in-memory Vault objects), so drop it now
         // rather than risk it going stale relative to a future direct DB write.
@@ -712,6 +789,7 @@ public class GuiManager {
      * {@link VaultTransactionService#commitSynchronously}.
      */
     public void closeAll(CloseReason reason) {
+        for (UUID actorUuid : List.copyOf(openRequests.keySet())) invalidateOpenRequests(actorUuid);
         for (Map.Entry<UUID, OpenSession> entry : Map.copyOf(openByPlayer).entrySet()) {
             OpenSession s = entry.getValue();
             VaultSession vs = s.getVaultSession();
@@ -872,6 +950,42 @@ public class GuiManager {
         cursor.setAmount(cursor.getAmount() - removed);
         player.setItemOnCursor(cursor.getAmount() == 0 ? null : cursor);
         return amount - removed;
+    }
+
+    void runOnMainThread(Runnable task) {
+        if (primaryThread.getAsBoolean()) {
+            task.run();
+        } else {
+            mainThreadScheduler.accept(task);
+        }
+    }
+
+    /** InventoryClickEvent forbids changing the open view until the next server tick. */
+    public void runNextTick(Runnable task) {
+        mainThreadScheduler.accept(task);
+    }
+
+    void publishOpenSession(Player actor, OpenSession session) {
+        // openInventory synchronously closes the previous view. Keep its mapping visible until
+        // that close event has finished so it can still snapshot and commit the old inventory.
+        actor.openInventory(session.getInventory());
+        openByPlayer.put(actor.getUniqueId(), session);
+    }
+
+    long beginOpenRequest(UUID actorUuid) {
+        return openRequests.merge(actorUuid, 1L, Long::sum);
+    }
+
+    private void invalidateOpenRequests(UUID actorUuid) {
+        beginOpenRequest(actorUuid);
+    }
+
+    private boolean isCurrentOpenRequest(UUID actorUuid, long request) {
+        return openRequests.getOrDefault(actorUuid, 0L) == request;
+    }
+
+    private void runIfCurrentOpenRequest(UUID actorUuid, long request, Runnable task) {
+        if (isCurrentOpenRequest(actorUuid, request)) task.run();
     }
 
     private static ItemSnapshot[] toSnapshots(ItemStack[] items) {

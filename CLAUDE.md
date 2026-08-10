@@ -20,7 +20,7 @@ Windows-only wrapper is checked in (`gradlew.bat`); there is no Unix `gradlew` s
 - `build` depends on `shadowJar` (see `build.gradle.kts`), so `build` always produces the relocated fat
   jar used for deployment — there's no separate "just compile" packaging step to reach for.
 - Output jar: `build/libs/vEnderchest-<version>.jar`.
-- No test suite/framework is configured in this project (no test source set, no test task usage).
+- JUnit 5 is configured; use `./gradlew.bat clean test build` for a release verification.
 
 ## Architecture
 
@@ -39,8 +39,9 @@ from on-disk config (e.g. nav slot positions).
 HikariCP, and `SqliteStorage`/`MysqlStorage` only supply the `DataSource` and the two dialect-specific
 upsert statements (`INSERT OR REPLACE` vs `ON DUPLICATE KEY UPDATE`). Three tables:
 
-- `ec_pages (uuid, page, data)` — one row per player per page. `data` is a Gson `JsonArray` of 45
-  slots, each either `null` or a base64-encoded `ItemStack#serializeAsBytes()`.
+- `ec_pages (uuid, page, data, revision)` — one row per player per page. `data` is a Gson
+  `JsonArray` of 45 slots, each either `null` or a base64-encoded
+  `ItemStack#serializeAsBytes()`; `revision` is the compare-and-swap guard.
 - `ec_extra (uuid, extra)` — purchased pages beyond permission-based pages (see below).
 - `ec_migrated (uuid, type)` — presence of a row means that `type` (`"vanilla"` / `"axvaults"`) has
   already been migrated for that player; migration is one-shot and idempotent.
@@ -51,19 +52,14 @@ the global `max-pages` config value.
 
 ### GUI layer (`gui/`)
 
-`GuiManager` is a per-player session state machine (`Map<UUID, OpenSession>` in `model/OpenSession`).
-Opening/closing/navigating a page always loads/saves asynchronously off the main thread, so the code
-has to guard against races:
-
-- **`openSeq`**: an increasing counter per player. Async page loads capture their sequence number
-  before dispatching; if the player has navigated again before the load's main-thread callback runs,
-  the stale callback is dropped (`openSeq.get(uuid) != seq`).
-- **`writeBuffer`**: when a page closes/navigates away, the in-memory snapshot is written to
-  `writeBuffer` synchronously and the DB write is scheduled async. A near-simultaneous reopen of the
-  same page reads `writeBuffer` instead of the DB, since the DB write may not have landed yet — this is
-  what prevents item duplication on fast reopen.
-- `OpenSession.dirty` gates every save (`saveAllDirty`, `flushAsync`, `closeAll`) so untouched pages
-  are never rewritten.
+`GuiManager` combines per-actor Bukkit bookkeeping (`Map<UUID, OpenSession>`) with the authoritative
+`VaultSessionRegistry`, keyed by `(owner, vaultId)`. Writes use revision CAS; `contentCache` is
+monotonic and never replaces an equal/newer revision with a delayed load. A monotonically increasing
+request number per actor additionally orders requests across different pages and menu types, so an
+old async completion can never publish over the newest GUI. Bukkit inventory build/open/apply work
+always converges on the primary thread, and view changes initiated by `InventoryClickEvent` run on
+the next tick. Keep the old session mapping visible until `Player#openInventory` finishes closing its
+view, otherwise its `InventoryCloseEvent` cannot find and commit the correct snapshot.
 
 `EnderchestGui`/`MainMenuGui` build `Inventory` objects from `gui/enderchest.yml` / `gui/main.yml`
 (slots, materials, MiniMessage names/lore). The content area is slots 0–44; the nav row is the fixed

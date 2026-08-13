@@ -1,5 +1,5 @@
 style:
-  prefix: "<dark_gray>[</dark_gray><primary>ᴇɴᴅᴇʀᴄʜᴇѕᴛ</primary><dark_gray>]</dark_gray> "
+  prefix: "<dark_gray>[<primary>vEnderchest</primary>]</dark_gray> <reset>"
   colors:
     primary: "#a970ff"
     secondary: "#d6b8ff"
@@ -26,6 +26,15 @@ config-reloaded: "<prefix><emoji:success> <success>Configuración y mensajes rec
 item-blacklisted: "<prefix><emoji:error> <error>Ese ítem no puede guardarse en el enderchest."
 vault-busy: "<prefix><emoji:warning> <warning>Este enderchest está siendo usado en otro lugar. Intenta nuevamente en unos segundos."
 vault-conflict-reverted: "<prefix><emoji:warning> <warning>El enderchest cambió en otro lugar. La transferencia fue revertida para evitar duplicaciones."
+cross-server-unavailable: "<prefix><emoji:warning> <warning>La red de enderchests no está disponible. Intenta nuevamente en unos segundos."
+cross-server-recovery-pending: "<prefix><emoji:warning> <warning>Tu inventario tiene una transferencia pendiente de recuperar. Reconecta e intenta nuevamente."
+cross-server-quarantined: "<prefix><emoji:error> <error>Este enderchest quedó bloqueado por seguridad. Contacta a un administrador."
+cross-server-failed: "<prefix><emoji:warning> <warning>La transferencia se congeló de forma segura. Cierra el menú e intenta nuevamente."
+cross-server-cursor-not-empty: "<prefix><emoji:warning> <warning>Deja vacío el cursor antes de abrir un enderchest cross-server."
+cross-server-inventory-full: "<prefix><emoji:warning> <warning>No tienes espacio suficiente para retirar ese objeto completo."
+cross-server-processing: "<muted>Sincronizando transferencia segura...</muted>"
+cross-server-admin-write-disabled: "<prefix><emoji:warning> <warning>Esta escritura administrativa está deshabilitada en modo cross-server. Usa el flujo transaccional del vault."
+storage-maintenance: "<prefix><emoji:warning> <warning>vEnderchest está en maintenance por migración de storage. Reinicia el servidor al terminar."
 
 commands:
   unknown: "<prefix><emoji:error> <error>Subcomando desconocido: <secondary><command></secondary>. <click:suggest_command:'/venderchest help'><hover:show_text:'<muted>Haz click para ver la ayuda.'><primary>Usa /venderchest help</primary></hover></click>."
@@ -53,6 +62,7 @@ commands:
       - "<emoji:arrow> <click:suggest_command:'/venderchestadmin addvault '><hover:show_text:'<secondary>Añade páginas extra a un jugador.</secondary>'><primary>/venderchestadmin addvault <jugador> <cantidad></primary></hover></click>"
       - "<emoji:arrow> <click:suggest_command:'/venderchestadmin removevault '><hover:show_text:'<secondary>Retira páginas extra a un jugador.</secondary>'><primary>/venderchestadmin removevault <jugador> <cantidad></primary></hover></click>"
       - "<emoji:arrow> <click:suggest_command:'/venderchestadmin migrate '><hover:show_text:'<secondary>Consulta o reinicia migraciones.</secondary>'><primary>/venderchestadmin migrate</primary></hover></click>"
+      - "<emoji:arrow> <click:suggest_command:'/venderchestadmin storage-migrate dry-run'><hover:show_text:'<secondary>Copia SQLite a MySQL de forma offline y reanudable.</secondary>'><primary>/venderchestadmin storage-migrate [dry-run|start|resume|status]</primary></hover></click>"
       - "<emoji:arrow> <click:suggest_command:'/venderchestadmin restore '><hover:show_text:'<warning>Lista, previsualiza o restaura backups.</warning>'><primary>/venderchestadmin restore <jugador></primary></hover></click>"
       - "<emoji:arrow> <click:run_command:'/venderchestadmin reload'><hover:show_text:'<warning>Recarga configuración y mensajes.</warning>'><primary>/venderchestadmin reload</primary></hover></click>"
       - ""

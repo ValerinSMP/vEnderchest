@@ -12,6 +12,7 @@ public class SqliteStorage extends AbstractJdbcStorage {
     private final File dataFolder;
 
     public SqliteStorage(ConfigManager config, File dataFolder) {
+        super(config.getTablePrefix());
         this.config = config;
         this.dataFolder = dataFolder;
     }

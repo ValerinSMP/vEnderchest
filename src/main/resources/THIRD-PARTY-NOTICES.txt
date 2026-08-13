@@ -1,0 +1,56 @@
+vEnderchest 1.1.0 - Third-party notices
+=========================================
+
+vEnderchest itself has no public license declared. This file only describes
+third-party code bundled in the runtime JAR.
+
+Bundled components
+------------------
+
+- Xerial SQLite JDBC 3.47.1.0 — Apache License 2.0. Its bundled SQLite/Zentus
+  portions retain their upstream public-domain/BSD notices under
+  META-INF/maven/org.xerial/sqlite-jdbc/.
+- MySQL Connector/J 9.1.0 — GNU GPL version 2 with the Universal FOSS
+  Exception, version 1.0. See META-INF/licenses/MySQL-Connector-J-9.1.0.txt.
+- Protocol Buffers Java 4.26.1 — BSD 3-Clause License.
+- HikariCP 6.2.1 — Apache License 2.0.
+- Lettuce Core 7.6.0.RELEASE — MIT License.
+- Redis AuthX Core 0.1.1-beta2 — MIT License.
+- Netty 4.2.13.Final modules — Apache License 2.0.
+- Reactor Core 3.6.6 — Apache License 2.0.
+- Reactive Streams 1.0.4 — MIT No Attribution (MIT-0).
+
+The complete Apache License 2.0 text is included at
+META-INF/licenses/Apache-2.0.txt. Upstream license sources for the remaining
+permissive components are:
+
+- https://github.com/redis/lettuce/blob/7.6.0.RELEASE/LICENSE
+- https://github.com/redis/redis-authx-core/blob/0.1.1-beta2/LICENSE
+- https://github.com/google/protobuf/blob/v26.1/LICENSE
+- https://github.com/reactive-streams/reactive-streams-jvm/blob/v1.0.4/LICENSE
+
+MIT License (Lettuce Core)
+--------------------------
+
+Copyright (c) 2023-Present, Redis Ltd.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+This notice is informational and does not grant a license to vEnderchest's
+own source code.

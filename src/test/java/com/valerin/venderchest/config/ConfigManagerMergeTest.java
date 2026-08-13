@@ -52,4 +52,32 @@ class ConfigManagerMergeTest {
         assertEquals(modifiedAfterFirstLoad, Files.getLastModifiedTime(file));
         assertEquals("NORMAL", secondLoad.getString("audit.level"));
     }
+
+    @Test
+    void reloadMigratesOnlyTheLegacyDefaultPrefix() throws Exception {
+        String legacy = "<dark_gray>[</dark_gray><primary>ᴇɴᴅᴇʀᴄʜᴇѕᴛ</primary><dark_gray>]</dark_gray> ";
+        String canonical = "<dark_gray>[<primary>vEnderchest</primary>]</dark_gray> <reset>";
+        YamlConfiguration defaults = new YamlConfiguration();
+        defaults.set("style.prefix", canonical);
+
+        Path legacyFile = tempDir.resolve("messages.yml");
+        Files.writeString(legacyFile, "style:\n  prefix: \"" + legacy + "\"\ncustom: kept\n");
+
+        YamlConfiguration migrated = ConfigManager.loadMerged(legacyFile.toFile(), defaults);
+        assertEquals(canonical, migrated.getString("style.prefix"));
+        assertEquals("kept", migrated.getString("custom"));
+
+        byte[] afterMigration = Files.readAllBytes(legacyFile);
+        ConfigManager.loadMerged(legacyFile.toFile(), defaults);
+        assertArrayEquals(afterMigration, Files.readAllBytes(legacyFile));
+
+        Path customFile = tempDir.resolve("custom/messages.yml");
+        Files.createDirectories(customFile.getParent());
+        Files.writeString(customFile, "style:\n  prefix: \"<gold>[MiEC]</gold> \"\n");
+        byte[] customBefore = Files.readAllBytes(customFile);
+
+        YamlConfiguration custom = ConfigManager.loadMerged(customFile.toFile(), defaults);
+        assertEquals("<gold>[MiEC]</gold> ", custom.getString("style.prefix"));
+        assertArrayEquals(customBefore, Files.readAllBytes(customFile));
+    }
 }

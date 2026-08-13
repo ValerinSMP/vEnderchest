@@ -53,7 +53,7 @@ class VaultAuditLogTest {
 
     private static VaultSession session() {
         VaultSession session = new VaultSession(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
-                "1", Instant.now());
+                "1", Instant.now(), VaultWriter.SINGLE_SERVER, 0);
         session.activate(1, new Object());
         return session;
     }

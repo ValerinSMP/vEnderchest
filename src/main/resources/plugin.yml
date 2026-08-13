@@ -20,7 +20,7 @@ commands:
     permission: venderchest.use
   venderchestadmin:
     description: Administración de enderchests
-    usage: /venderchestadmin <help|view|clear|reload> [jugador] [página]
+    usage: /venderchestadmin <help|view|clear|reload|storage-migrate> [args]
     aliases: [ecadmin, pvadmin, echestadmin, enderchestadmin]
     permission: venderchest.admin
 

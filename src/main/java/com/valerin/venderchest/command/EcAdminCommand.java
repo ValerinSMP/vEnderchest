@@ -3,13 +3,16 @@ package com.valerin.venderchest.command;
 import com.valerin.venderchest.VEnderchest;
 import com.valerin.venderchest.config.ConfigManager;
 import com.valerin.venderchest.gui.GuiManager;
+import com.valerin.venderchest.migration.StorageMigrationCoordinator;
 import com.valerin.venderchest.storage.Storage;
+import com.valerin.venderchest.storage.StorageAccessGate;
 import com.valerin.venderchest.utils.RelativeTime;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.ConsoleCommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -19,6 +22,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 public class EcAdminCommand implements CommandExecutor, TabCompleter {
 
@@ -26,12 +30,18 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
     private final GuiManager guiManager;
     private final Storage storage;
     private final ConfigManager config;
+    private final StorageMigrationCoordinator storageMigration;
+    private final StorageAccessGate storageGate;
 
-    public EcAdminCommand(VEnderchest plugin, GuiManager guiManager, Storage storage, ConfigManager config) {
+    public EcAdminCommand(VEnderchest plugin, GuiManager guiManager, Storage storage,
+                          ConfigManager config, StorageMigrationCoordinator storageMigration,
+                          StorageAccessGate storageGate) {
         this.plugin = plugin;
         this.guiManager = guiManager;
         this.storage = storage;
         this.config = config;
+        this.storageMigration = storageMigration;
+        this.storageGate = storageGate;
     }
 
     @Override
@@ -50,8 +60,17 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage(config.msg("no-permission"));
             return true;
         }
+        String requested = args[0].toLowerCase();
+        if (storageGate.isMaintenance()
+                && !requested.equals("storage-migrate")
+                && !requested.equals("help") && !requested.equals("ayuda")
+                && !requested.equals("?") && !requested.equals("about")
+                && !requested.equals("info") && !requested.equals("acerca")) {
+            rejectMaintenance(sender);
+            return true;
+        }
 
-        return switch (args[0].toLowerCase()) {
+        return switch (requested) {
             case "help", "ayuda", "?" -> {
                 config.getMessageService().sendLines(sender, "commands.admin-help.lines");
                 yield true;
@@ -62,6 +81,7 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
                 yield true;
             }
             case "reload" -> {
+                if (rejectMaintenance(sender)) yield true;
                 plugin.reload();
                 sender.sendMessage(config.msg("config-reloaded"));
                 yield true;
@@ -71,6 +91,7 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
             case "addvault"    -> handleVault(sender, args, true);
             case "removevault" -> handleVault(sender, args, false);
             case "migrate"     -> handleMigrate(sender, args);
+            case "storage-migrate" -> handleStorageMigration(sender, args);
             case "restore"     -> handleRestore(sender, args);
             default -> { sendUsage(sender); yield true; }
         };
@@ -114,6 +135,10 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
 
     private boolean handleClear(CommandSender sender, String[] args) {
         if (args.length < 2) { sendUsage(sender); return true; }
+        if (guiManager.isCrossServerModeRequired()) {
+            sender.sendMessage(config.msg("cross-server-admin-write-disabled"));
+            return true;
+        }
 
         // Support offline players via name lookup (online-only for simplicity)
         Player target = Bukkit.getPlayer(args[1]);
@@ -136,8 +161,13 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
         }
 
         int page = args.length >= 3 ? parsePageOrDefault(args[2], 1) : 1;
-        storage.clearPage(targetUuid, page);
-        guiManager.invalidateCache(targetUuid, page); // bypasses the session/commit path - cache would otherwise go stale
+        if (!storageGate.tryBegin()) return rejectMaintenance(sender);
+        try {
+            storage.clearPage(targetUuid, page);
+            guiManager.invalidateCache(targetUuid, page); // direct DB write would otherwise leave cache stale
+        } finally {
+            storageGate.end();
+        }
         sender.sendMessage(config.msg("admin-cleared",
                 Placeholder.unparsed("player", targetName),
                 Placeholder.unparsed("page", String.valueOf(page))));
@@ -178,7 +208,7 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
         String name = offlinePlayer.getName() != null ? offlinePlayer.getName() : args[1];
 
         final boolean addFinal = add;
-        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+        runStorageAsync(sender, () -> {
             if (addFinal) storage.addExtraPages(uuid, amount);
             else          storage.removeExtraPages(uuid, amount);
             int newExtra = storage.getExtraPages(uuid);
@@ -217,7 +247,7 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
             }
             UUID uuid = op.getUniqueId();
             String name = op.getName() != null ? op.getName() : args[2];
-            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            runStorageAsync(sender, () -> {
                 boolean v = storage.isMigrated(uuid, "vanilla");
                 boolean a = storage.isMigrated(uuid, "axvaults");
                 sender.sendMessage(config.getMM().deserialize(
@@ -242,8 +272,7 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
             }
             UUID resetUuid = op.getUniqueId();
             String name = op.getName() != null ? op.getName() : args[2];
-            plugin.getServer().getScheduler().runTaskAsynchronously(plugin,
-                    () -> storage.unmarkMigrated(resetUuid, type));
+            runStorageAsync(sender, () -> storage.unmarkMigrated(resetUuid, type));
             sender.sendMessage(config.getMM().deserialize(
                     "<green>Flag de migración <white>" + type + "</white> borrado para <white>" + name
                     + "<green>. Se re-migrará en el próximo login."));
@@ -319,7 +348,7 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
     }
 
     private void listBackupsInChat(CommandSender sender, UUID targetUuid, String targetName) {
-        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+        runStorageAsync(sender, () -> {
             List<Storage.BackupRecord> backups = storage.listBackups(targetUuid);
             plugin.getServer().getScheduler().runTask(plugin, () -> {
                 if (backups.isEmpty()) {
@@ -343,7 +372,11 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
 
     /** Restores directly with no preview - the console-friendly path, also reachable from in-game. */
     private void directRestoreById(CommandSender sender, UUID targetUuid, String targetName, int backupId) {
-        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+        if (guiManager.isCrossServerModeRequired()) {
+            sender.sendMessage(config.msg("cross-server-admin-write-disabled"));
+            return;
+        }
+        runStorageAsync(sender, () -> {
             Storage.BackupRecord record = storage.getBackup(backupId);
             if (record == null || !record.uuid().equals(targetUuid)) {
                 plugin.getServer().getScheduler().runTask(plugin, () -> sender.sendMessage(config.getMM().deserialize(
@@ -363,7 +396,7 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
                                     + " está abierta ahora mismo. Pedile que la cierre antes de restaurar."));
                     return;
                 }
-                plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+                runStorageAsync(sender, () -> {
                     storage.savePage(targetUuid, record.page(), items);
                     plugin.getServer().getScheduler().runTask(plugin, () -> {
                         guiManager.invalidateCache(targetUuid, record.page());
@@ -378,20 +411,112 @@ public class EcAdminCommand implements CommandExecutor, TabCompleter {
         });
     }
 
+    private boolean handleStorageMigration(CommandSender sender, String[] args) {
+        if (args.length != 2) {
+            sender.sendMessage(config.getMM().deserialize(
+                    "<gray>Uso: <white>/venderchestadmin storage-migrate <dry-run|start|resume|status>"));
+            return true;
+        }
+        String action = args[1].toLowerCase();
+        if ((action.equals("start") || action.equals("resume"))
+                && !(sender instanceof ConsoleCommandSender)) {
+            sender.sendMessage(config.getMM().deserialize(
+                    "<red>start/resume solo se pueden ejecutar desde la consola."));
+            return true;
+        }
+
+        if (action.equals("status")) {
+            var status = storageMigration.status();
+            sender.sendMessage(config.getMM().deserialize(
+                    "<gray>Migración de storage: <white>" + status.status()
+                            + "</white><gray>, procesadas=<white>" + status.processed()
+                            + "</white>, insertadas=<white>" + status.inserted()
+                            + "</white>, idénticas=<white>" + status.skipped()
+                            + (status.lastKey() == null ? "" : "</white>, última=<white>" + status.lastKey())
+                            + (status.conflict() == null ? "" : "</white>, conflicto=<red>" + status.conflict())));
+            return true;
+        }
+
+        Consumer<StorageMigrationCoordinator.Result> report = result -> {
+            sender.sendMessage(config.getMM().deserialize(
+                    (result.success() ? "<green>" : "<red>") + result.message()));
+            if (result.informational() || result.owners() != 0 || result.pages() != 0
+                    || result.missing() != 0 || result.equal() != 0 || result.conflicts() != 0) {
+                sender.sendMessage(config.getMM().deserialize(
+                        "<gray>owners=<white>" + result.owners()
+                                + "</white> pages=<white>" + result.pages()
+                                + "</white> bytes=<white>" + result.bytes()
+                                + "</white> missing=<white>" + result.missing()
+                                + "</white> equal=<white>" + result.equal()
+                                + "</white> conflicts=<white>" + result.conflicts()));
+            }
+            if (result.hash() != null) {
+                sender.sendMessage(config.getMM().deserialize(
+                        "<gray>SHA-256 lógico: <white>" + result.hash()));
+            }
+        };
+
+        boolean accepted = switch (action) {
+            case "dry-run" -> storageMigration.dryRun(report);
+            case "start" -> storageMigration.start(report);
+            case "resume" -> storageMigration.resume(report);
+            default -> false;
+        };
+        if (!accepted) {
+            sender.sendMessage(config.getMM().deserialize(
+                    action.equals("dry-run") || action.equals("start") || action.equals("resume")
+                            ? "<red>Ya hay una operación de migración ejecutándose."
+                            : "<red>Acción inválida. Usa dry-run, start, resume o status."));
+        } else {
+            sender.sendMessage(config.getMM().deserialize(
+                    "<gray>Operación iniciada; el resultado aparecerá en esta consola."));
+        }
+        return true;
+    }
+
+    private void runStorageAsync(CommandSender sender, Runnable task) {
+        if (!storageGate.tryBegin()) {
+            rejectMaintenance(sender);
+            return;
+        }
+        try {
+            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+                try {
+                    task.run();
+                } finally {
+                    storageGate.end();
+                }
+            });
+        } catch (RuntimeException error) {
+            storageGate.end();
+            throw error;
+        }
+    }
+
+    private boolean rejectMaintenance(CommandSender sender) {
+        sender.sendMessage(config.msg("storage-maintenance"));
+        return true;
+    }
+
     private void sendUsage(CommandSender sender) {
         sender.sendMessage(config.getMM().deserialize(
-                "<gray>Uso: <white>/venderchestadmin <view|clear|reload|addvault|removevault|migrate|restore> [jugador] [args]"));
+                "<gray>Uso: <white>/venderchestadmin <view|clear|reload|addvault|removevault|migrate|storage-migrate|restore> [args]"));
     }
 
     @Override
     public @Nullable List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
                                                 @NotNull String label, @NotNull String[] args) {
         if (args.length == 1) {
-            return List.of("help", "about", "view", "clear", "reload", "addvault", "removevault", "migrate", "restore").stream()
+            return List.of("help", "about", "view", "clear", "reload", "addvault", "removevault",
+                            "migrate", "storage-migrate", "restore").stream()
                     .filter(s -> s.startsWith(args[0].toLowerCase())).toList();
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("migrate")) {
             return List.of("status", "reset").stream()
+                    .filter(s -> s.startsWith(args[1].toLowerCase())).toList();
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("storage-migrate")) {
+            return List.of("dry-run", "start", "resume", "status").stream()
                     .filter(s -> s.startsWith(args[1].toLowerCase())).toList();
         }
         if (args.length == 4 && args[0].equalsIgnoreCase("migrate") && args[1].equalsIgnoreCase("reset")) {

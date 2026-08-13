@@ -39,3 +39,9 @@ denied:
   sound: ENTITY_VILLAGER_NO
   volume: 0.6
   pitch: 1.2
+
+cross-transfer:
+  enabled: true
+  sound: BLOCK_NOTE_BLOCK_HAT
+  volume: 0.25
+  pitch: 1.4

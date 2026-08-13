@@ -37,7 +37,8 @@ public final class VaultSessionRegistry {
         VaultKey key = new VaultKey(ownerUuid, vaultId);
         VaultSession existing = current.get(key);
         if (existing == null) {
-            VaultSession session = new VaultSession(UUID.randomUUID(), ownerUuid, actorUuid, vaultId, Instant.now());
+            VaultSession session = new VaultSession(UUID.randomUUID(), ownerUuid, actorUuid, vaultId,
+                    Instant.now(), VaultWriter.SINGLE_SERVER, 0);
             current.put(key, session);
             bySessionId.put(session.getSessionId(), session);
             return new OpenAttempt.Created(session);
@@ -57,6 +58,45 @@ public final class VaultSessionRegistry {
     public boolean activate(UUID sessionId, long loadedRevision, Object inventoryToken) {
         VaultSession session = bySessionId.get(sessionId);
         return session != null && session.activate(loadedRevision, inventoryToken);
+    }
+
+    public OpenAttempt beginOpenCrossServer(
+            UUID ownerUuid, UUID actorUuid, String vaultId, UUID sessionId, long fence) {
+        VaultKey key = new VaultKey(ownerUuid, vaultId);
+        VaultSession existing = current.get(key);
+        if (existing == null) {
+            VaultSession session = new VaultSession(sessionId, ownerUuid, actorUuid, vaultId,
+                    Instant.now(), VaultWriter.CROSS_SERVER, fence);
+            current.put(key, session);
+            bySessionId.put(session.getSessionId(), session);
+            return new OpenAttempt.Created(session);
+        }
+        if (existing.getActorUuid().equals(actorUuid)) return new OpenAttempt.Supersede(existing);
+        return new OpenAttempt.Rejected(existing);
+    }
+
+    public Optional<VaultSession> switchCrossServerPage(UUID sessionId, String nextVaultId) {
+        VaultSession previous = bySessionId.get(sessionId);
+        if (previous == null || !previous.isCrossServer() || previous.getState() != SessionState.ACTIVE) {
+            return Optional.empty();
+        }
+        VaultKey nextKey = new VaultKey(previous.getOwnerUuid(), nextVaultId);
+        VaultSession occupant = current.get(nextKey);
+        if (occupant != null && occupant != previous) return Optional.empty();
+
+        bySessionId.remove(sessionId, previous);
+        current.remove(previous.key(), previous);
+        previous.forceClose();
+        VaultSession next = new VaultSession(sessionId, previous.getOwnerUuid(), previous.getActorUuid(),
+                nextVaultId, Instant.now(), VaultWriter.CROSS_SERVER, previous.getNetworkFence());
+        current.put(nextKey, next);
+        bySessionId.put(sessionId, next);
+        return Optional.of(next);
+    }
+
+    public boolean advanceNetworkRevision(UUID sessionId, long expectedRevision, long newRevision) {
+        VaultSession session = bySessionId.get(sessionId);
+        return session != null && session.advanceNetworkRevision(expectedRevision, newRevision);
     }
 
     /** ACTIVE -&gt; COMMITTING. CAS'd: succeeds at most once per session, so a commit can never double-fire. */

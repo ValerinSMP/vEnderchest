@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.valerin"
-version = "1.0.2"
+version = "1.1.0"
 
 repositories {
     mavenCentral()
@@ -18,13 +18,14 @@ dependencies {
     implementation("org.xerial:sqlite-jdbc:3.47.1.0")
     implementation("com.mysql:mysql-connector-j:9.1.0")
     implementation("com.zaxxer:HikariCP:6.2.1")
-    implementation("com.h2database:h2:2.2.224")
+    implementation("io.lettuce:lettuce-core:7.6.0.RELEASE")
 
     // compileOnly does not propagate to the test classpath, so paper-api needs to be re-declared
     // here purely so the tests can compile against types like ItemStack/Storage.PageRecord. Tests
     // never actually instantiate a real ItemStack (Paper's Material/item registry requires a live
     // server even for `new ItemStack(Material, amount)`) - they use null/ItemStack[] arrays.
     testImplementation("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+    testImplementation("com.h2database:h2:2.2.224")
     testImplementation(platform("org.junit:junit-bom:5.10.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -48,6 +49,12 @@ tasks {
         relocate("org.sqlite", "com.valerin.venderchest.libs.sqlite")
         relocate("com.mysql", "com.valerin.venderchest.libs.mysql")
         relocate("com.zaxxer.hikari", "com.valerin.venderchest.libs.hikari")
+        relocate("io.lettuce", "com.valerin.venderchest.libs.lettuce")
+        relocate("io.netty", "com.valerin.venderchest.libs.netty")
+        relocate("reactor", "com.valerin.venderchest.libs.reactor")
+        relocate("org.reactivestreams", "com.valerin.venderchest.libs.reactivestreams")
+        relocate("redis.clients.authentication", "com.valerin.venderchest.libs.redisauthx")
+        relocate("com.google.protobuf", "com.valerin.venderchest.libs.protobuf")
         // H2 is NOT relocated: it uses internal resource paths (org/h2/res/) that
         // Shadow can't patch in string constants, causing ClassLoader failures at runtime.
 
@@ -64,6 +71,9 @@ tasks {
         exclude("org/sqlite/native/FreeBSD/**")
         exclude("org/sqlite/native/Windows/aarch64/**")
         exclude("org/sqlite/native/Windows/x86/**")
+        // Paper supplies the SLF4J API and binding. Shading a private API copy would
+        // disconnect Hikari/Lettuce from that binding and emit a NOP-logger warning.
+        exclude("org/slf4j/**")
     }
     build {
         dependsOn(shadowJar)

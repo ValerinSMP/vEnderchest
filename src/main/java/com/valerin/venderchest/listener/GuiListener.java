@@ -18,6 +18,9 @@ import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 public class GuiListener implements Listener {
 
     private final GuiManager guiManager;
@@ -57,6 +60,7 @@ public class GuiListener implements Listener {
             event.setCancelled(true);
             return;
         }
+        guiManager.markDirtyNextTick(session);
 
         int rawSlot = event.getRawSlot();
         int topSize = topInv.getSize();
@@ -184,6 +188,7 @@ public class GuiListener implements Listener {
             event.setCancelled(true);
             return;
         }
+        guiManager.markDirtyNextTick(session);
 
         int topSize = topInv.getSize();
 
@@ -260,6 +265,7 @@ public class GuiListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onClose(InventoryCloseEvent event) {
         if (!(event.getPlayer() instanceof Player player)) return;
+        guiManager.detachCrossCursorBeforeClose(player, event.getInventory());
         guiManager.handleBackupBrowseClose(player.getUniqueId(), event.getInventory());
         // Only play close sound if truly closing (not navigating to another GUI)
         var session = guiManager.getSession(player.getUniqueId());
@@ -299,4 +305,5 @@ public class GuiListener implements Listener {
             guiManager.navigateToMainMenu(player);
         }
     }
+
 }

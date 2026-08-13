@@ -8,6 +8,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.player.PlayerKickEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
@@ -45,12 +46,20 @@ public class InterceptListener implements Listener {
      */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(PlayerQuitEvent event) {
+        guiManager.detachCrossCursorBeforeDisconnect(event.getPlayer());
         guiManager.handleDisconnect(event.getPlayer().getUniqueId(), CloseReason.LOGOUT);
     }
 
     /** Fires before the quit pipeline for a kicked player; gives a more precise close reason than LOGOUT. */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onKick(PlayerKickEvent event) {
+        guiManager.detachCrossCursorBeforeDisconnect(event.getPlayer());
         guiManager.handleDisconnect(event.getPlayer().getUniqueId(), CloseReason.KICK);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onDeath(PlayerDeathEvent event) {
+        guiManager.parkCrossCursorBeforeDeath(event.getEntity());
+        guiManager.handleDisconnect(event.getEntity().getUniqueId(), CloseReason.CLIENT_CLOSE);
     }
 }

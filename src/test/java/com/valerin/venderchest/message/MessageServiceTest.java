@@ -28,6 +28,18 @@ class MessageServiceTest {
     }
 
     @Test
+    void defaultPrefixFollowsVisibleFormatContract() {
+        YamlConfiguration yaml = defaultConfiguration();
+        yaml.set("sample", "<prefix><emoji:success> <success>Listo");
+
+        MessageService service = new MessageService(yaml);
+
+        assertEquals("<dark_gray>[<primary>vEnderchest</primary>]</dark_gray> <reset>",
+                yaml.getString("style.prefix"));
+        assertEquals("[vEnderchest] ✔ Listo", plain.serialize(service.component("sample")));
+    }
+
+    @Test
     void preservesBlankLinesInMessageLists() {
         YamlConfiguration yaml = baseConfiguration();
         yaml.set("sample-lines", List.of("<primary>Inicio</primary>", "", "<muted>Fin</muted>"));
@@ -43,10 +55,7 @@ class MessageServiceTest {
 
     @Test
     void parsesInteractiveDefaultHelpAndAboutMessages() {
-        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(new InputStreamReader(
-                Objects.requireNonNull(getClass().getClassLoader().getResourceAsStream("messages.yml")),
-                StandardCharsets.UTF_8
-        ));
+        YamlConfiguration yaml = defaultConfiguration();
         MessageService service = new MessageService(yaml);
 
         service.lines("commands.help.header");
@@ -55,6 +64,13 @@ class MessageServiceTest {
         service.lines("commands.help.footer");
         service.lines("commands.about.lines", Placeholder.unparsed("version", "test"));
         service.component("commands.unknown", Placeholder.unparsed("command", "invalid"));
+    }
+
+    private YamlConfiguration defaultConfiguration() {
+        return YamlConfiguration.loadConfiguration(new InputStreamReader(
+                Objects.requireNonNull(getClass().getClassLoader().getResourceAsStream("messages.yml")),
+                StandardCharsets.UTF_8
+        ));
     }
 
     private YamlConfiguration baseConfiguration() {

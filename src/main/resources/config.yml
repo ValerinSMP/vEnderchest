@@ -4,6 +4,8 @@ autosave-minutes: 5
 
 database:
   type: sqlite   # sqlite / mysql
+  # Letras, numeros y guion bajo. Debe ser igual en todos los servidores de la red.
+  table-prefix: ec_
   sqlite:
     file: enderchest.db
   mysql:
@@ -13,6 +15,28 @@ database:
     username: root
     password: ""
     pool-size: 5
+
+# Coordinacion entre servidores. MySQL conserva siempre el contenido autoritativo;
+# Redis solo coordina leases rapidos. Dejalo apagado para un servidor unico.
+cross-server:
+  # MySQL conserva la autoridad y Redis coordina leases. Las acciones de GUI se confirman
+  # de forma durable antes de mostrarse; DROP/clic fuera/creative permanecen bloqueados.
+  enabled: false
+  network: valerin
+  server-id: server-1
+  redis:
+    host: localhost
+    port: 6379
+    username: ""
+    password: ""
+    tls: false
+    database: 0
+    timeout-ms: 1500
+  lease:
+    ttl-ms: 30000
+    renew-ms: 5000
+    safety-ms: 10000
+    mysql-seconds: 45
 
 # Ítems que no pueden guardarse en el enderchest
 blacklist: []

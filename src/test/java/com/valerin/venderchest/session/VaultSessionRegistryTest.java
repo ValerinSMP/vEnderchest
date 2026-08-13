@@ -255,6 +255,25 @@ class VaultSessionRegistryTest {
         assertEquals(1, registry.allActive().size(), "exactly one live session for the vault at any time");
     }
 
+    @Test
+    void crossServerPageSwitchKeepsSessionAndFenceButReplacesPageView() {
+        VaultSessionRegistry registry = new VaultSessionRegistry();
+        UUID sessionId = UUID.randomUUID();
+        VaultSession first = ((OpenAttempt.Created) registry.beginOpenCrossServer(
+                owner, actor, "1", sessionId, 6)).session();
+        assertTrue(registry.activate(sessionId, 10, new Object()));
+
+        VaultSession second = registry.switchCrossServerPage(sessionId, "2").orElseThrow();
+
+        assertEquals(SessionState.CLOSED, first.getState());
+        assertEquals(sessionId, second.getSessionId());
+        assertEquals(6, second.getNetworkFence());
+        assertEquals(VaultWriter.CROSS_SERVER, second.getWriter());
+        assertEquals("2", second.getVaultId());
+        assertTrue(registry.current(new VaultKey(owner, "1")).isEmpty());
+        assertSame(second, registry.current(new VaultKey(owner, "2")).orElseThrow());
+    }
+
     private VaultSession createActive(VaultSessionRegistry registry) {
         return createActive(registry, new Object());
     }

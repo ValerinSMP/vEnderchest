@@ -16,18 +16,26 @@ public final class VaultSession {
     private final UUID actorUuid;
     private final String vaultId;
     private final Instant openedAt;
+    private final VaultWriter writer;
+    private final long networkFence;
     private final AtomicReference<SessionState> state = new AtomicReference<>(SessionState.OPENING);
 
     private volatile long loadedRevision = -1;
     private volatile long currentRevision = -1;
     private volatile Object inventoryToken;
 
-    VaultSession(UUID sessionId, UUID ownerUuid, UUID actorUuid, String vaultId, Instant openedAt) {
+    VaultSession(UUID sessionId, UUID ownerUuid, UUID actorUuid, String vaultId, Instant openedAt,
+                 VaultWriter writer, long networkFence) {
+        if ((writer == VaultWriter.CROSS_SERVER) != (networkFence > 0)) {
+            throw new IllegalArgumentException("writer and network fence do not match");
+        }
         this.sessionId = sessionId;
         this.ownerUuid = ownerUuid;
         this.actorUuid = actorUuid;
         this.vaultId = vaultId;
         this.openedAt = openedAt;
+        this.writer = writer;
+        this.networkFence = networkFence;
     }
 
     VaultKey key() {
@@ -56,6 +64,17 @@ public final class VaultSession {
     void setCurrentRevision(long revision) {
         this.currentRevision = revision;
     }
+
+    boolean advanceNetworkRevision(long expectedRevision, long newRevision) {
+        if (!isCrossServer() || state.get() != SessionState.ACTIVE
+                || currentRevision != expectedRevision || newRevision != expectedRevision + 1) return false;
+        currentRevision = newRevision;
+        return true;
+    }
+
+    public VaultWriter getWriter() { return writer; }
+    public boolean isCrossServer() { return writer == VaultWriter.CROSS_SERVER; }
+    public long getNetworkFence() { return networkFence; }
 
     public UUID getSessionId() { return sessionId; }
     public UUID getOwnerUuid() { return ownerUuid; }

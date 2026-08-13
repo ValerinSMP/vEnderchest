@@ -106,7 +106,10 @@ public final class VaultTransactionService {
         ItemStack[] toSave = cloneArray(currentSnapshot);
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-            Storage.SaveResult result = storage.savePageIfRevision(owner, page, toSave, baseRevision);
+            Storage.SaveResult result = session.isCrossServer()
+                    ? storage.savePageIfRevisionAndFence(owner, page, toSave, baseRevision,
+                    session.getNetworkFence())
+                    : storage.savePageIfRevision(owner, page, toSave, baseRevision);
             if (result instanceof Storage.SaveResult.Success success) {
                 writeBackup(owner, page, success.newRevision(), toSave); // still off the main thread here
             }
@@ -118,14 +121,21 @@ public final class VaultTransactionService {
                     audit.commit(session, baseRevision, success.newRevision(), diffs, durationMs);
                     fireCommitted(session, baseRevision, success.newRevision(), diffs, originalSnapshot, currentSnapshot);
                     outcome = CommitOutcome.COMMITTED;
-                } else {
-                    Storage.SaveResult.Conflict conflict = (Storage.SaveResult.Conflict) result;
+                } else if (result instanceof Storage.SaveResult.Conflict conflict) {
                     audit.conflict(session.getSessionId(), owner, session.getActorUuid(), session.getVaultId(),
                             ConflictType.STALE_REVISION, baseRevision, conflict.currentRevision());
                     fireConflict(session, ConflictType.STALE_REVISION, baseRevision, conflict.currentRevision(),
                             diffs, originalSnapshot, currentSnapshot);
                     // Leave the session in COMMITTING - the caller is expected to close() it and
                     // reload fresh state rather than retry blindly with data we know is stale.
+                    outcome = CommitOutcome.CONFLICT;
+                } else {
+                    long observed = result instanceof Storage.SaveResult.StaleFence stale
+                            ? stale.currentFence() : -1;
+                    audit.conflict(session.getSessionId(), owner, session.getActorUuid(), session.getVaultId(),
+                            ConflictType.LOST_UPDATE, baseRevision, observed);
+                    plugin.getLogger().warning("Vault save failed closed for owner=" + owner
+                            + " page=" + page + " result=" + result.getClass().getSimpleName());
                     outcome = CommitOutcome.CONFLICT;
                 }
                 settle(session, onSettled, outcome);
@@ -174,7 +184,10 @@ public final class VaultTransactionService {
         UUID owner = session.getOwnerUuid();
         int page = Integer.parseInt(session.getVaultId());
         long baseRevision = session.getCurrentRevision();
-        Storage.SaveResult result = storage.savePageIfRevision(owner, page, cloneArray(currentSnapshot), baseRevision);
+        Storage.SaveResult result = session.isCrossServer()
+                ? storage.savePageIfRevisionAndFence(owner, page, cloneArray(currentSnapshot), baseRevision,
+                session.getNetworkFence())
+                : storage.savePageIfRevision(owner, page, cloneArray(currentSnapshot), baseRevision);
 
         if (result instanceof Storage.SaveResult.Success success) {
             registry.completeCommit(session.getSessionId(), success.newRevision());
@@ -186,6 +199,12 @@ public final class VaultTransactionService {
                     ConflictType.STALE_REVISION, baseRevision, conflict.currentRevision());
             fireConflict(session, ConflictType.STALE_REVISION, baseRevision, conflict.currentRevision(),
                     diffs, originalSnapshot, currentSnapshot);
+        } else {
+            long observed = result instanceof Storage.SaveResult.StaleFence stale ? stale.currentFence() : -1;
+            audit.conflict(session.getSessionId(), owner, session.getActorUuid(), session.getVaultId(),
+                    ConflictType.LOST_UPDATE, baseRevision, observed);
+            plugin.getLogger().warning("Vault synchronous save failed closed for owner=" + owner
+                    + " page=" + page + " result=" + result.getClass().getSimpleName());
         }
     }
 

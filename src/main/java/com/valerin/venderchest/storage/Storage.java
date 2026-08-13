@@ -32,10 +32,14 @@ public interface Storage {
     record PageRecord(ItemStack[] items, long revision) {}
 
     /** Outcome of an optimistic-concurrency save attempt. */
-    sealed interface SaveResult permits SaveResult.Success, SaveResult.Conflict {
+    sealed interface SaveResult permits SaveResult.Success, SaveResult.Conflict, SaveResult.StaleFence, SaveResult.Failure {
         record Success(long newRevision) implements SaveResult {}
         /** The persisted revision no longer matched what the caller expected; nothing was written. */
         record Conflict(long currentRevision) implements SaveResult {}
+        /** A newer cross-server lease advanced the owner's durable fencing token. */
+        record StaleFence(long currentFence) implements SaveResult {}
+        /** The store could not confirm whether the operation completed. */
+        record Failure(String reason) implements SaveResult {}
     }
 
     /** Loads a page together with its current persisted revision. */
@@ -49,6 +53,13 @@ public interface Storage {
      * what the caller last observed.
      */
     SaveResult savePageIfRevision(UUID uuid, int page, ItemStack[] items, long expectedRevision);
+
+    /** Advances and returns the durable, owner-wide fencing token. MySQL is authoritative. */
+    long advanceFencingToken(UUID uuid) throws SQLException;
+
+    /** Revision CAS guarded by the durable owner-wide fencing token in the same DB transaction. */
+    SaveResult savePageIfRevisionAndFence(
+            UUID uuid, int page, ItemStack[] items, long expectedRevision, long fencingToken);
 
     void clearPage(UUID uuid, int page);
 

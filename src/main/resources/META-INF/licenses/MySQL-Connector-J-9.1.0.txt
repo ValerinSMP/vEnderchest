@@ -1,0 +1,19 @@
+MySQL Connector/J 9.1.0 Community
+=================================
+
+MySQL Connector/J 9.1.0 is distributed under the GNU General Public License,
+version 2, with additional permission for separately licensed software and
+the Universal FOSS Exception, version 1.0.
+
+The complete version-pinned license manual is available from the upstream
+source distribution:
+
+https://github.com/mysql/mysql-connector-j/blob/9.1.0/LICENSE
+
+GNU GPL version 2:
+https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+
+Universal FOSS Exception, version 1.0:
+https://oss.oracle.com/licenses/universal-foss-exception/
+
+Copyright (c) Oracle and/or its affiliates. All rights reserved.

@@ -3,6 +3,16 @@ package com.valerin.venderchest.gui;
 import com.valerin.venderchest.VEnderchest;
 import com.valerin.venderchest.api.CloseReason;
 import com.valerin.venderchest.config.ConfigManager;
+import com.valerin.venderchest.crossserver.BukkitPlayerDataPort;
+import com.valerin.venderchest.crossserver.CrossServerInventoryPlanner;
+import com.valerin.venderchest.crossserver.CrossServerMutationController;
+import com.valerin.venderchest.crossserver.CursorEscrow;
+import com.valerin.venderchest.crossserver.EscrowProjection;
+import com.valerin.venderchest.crossserver.MutationPlan;
+import com.valerin.venderchest.crossserver.PlannedMutation;
+import com.valerin.venderchest.crossserver.SlotRef;
+import com.valerin.venderchest.crossserver.SlotValue;
+import com.valerin.venderchest.crossserver.VaultPayloadCodec;
 import com.valerin.venderchest.model.OpenSession;
 import com.valerin.venderchest.session.CommitOutcome;
 import com.valerin.venderchest.session.BukkitItemSnapshot;
@@ -16,13 +26,19 @@ import com.valerin.venderchest.session.VaultSession;
 import com.valerin.venderchest.session.VaultSessionRegistry;
 import com.valerin.venderchest.session.VaultTransactionService;
 import com.valerin.venderchest.storage.Storage;
+import com.valerin.venderchest.storage.StorageAccessGate;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
+import org.bukkit.event.inventory.InventoryAction;
+import org.bukkit.event.inventory.ClickType;
+import org.bukkit.event.inventory.DragType;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
@@ -40,7 +56,7 @@ import java.util.function.Consumer;
  * the two maps transiently disagree (e.g. two opens issued in the same tick, before the first has
  * even finished loading).
  */
-public class GuiManager {
+public class GuiManager implements CrossServerMutationController.ViewPort {
 
     private final VEnderchest plugin;
     private final Storage storage;
@@ -53,6 +69,12 @@ public class GuiManager {
     private final VaultTransactionService txService;
     private final BooleanSupplier primaryThread;
     private final Consumer<Runnable> mainThreadScheduler;
+    private final CrossServerInventoryPlanner crossServerPlanner = new CrossServerInventoryPlanner();
+    private final BukkitPlayerDataPort playerData;
+    private final EscrowProjection escrowProjection;
+    private volatile CrossServerMutationController crossServer;
+    private volatile boolean crossServerRequired;
+    private volatile StorageAccessGate storageGate = new StorageAccessGate();
 
     /** Actor UUID -> what that actor's client currently has open. Main-thread only. */
     private final Map<UUID, OpenSession> openByPlayer = new ConcurrentHashMap<>();
@@ -69,6 +91,8 @@ public class GuiManager {
      * an out-of-band write such as {@code /ecadmin clear} (see {@link #invalidateCache}).
      */
     private final Map<VaultKey, Storage.PageRecord> contentCache = new ConcurrentHashMap<>();
+    private final Set<UUID> dirtySessions = ConcurrentHashMap.newKeySet();
+    private final Set<UUID> dirtyCaptureScheduled = ConcurrentHashMap.newKeySet();
     /** Admin UUID -> ephemeral backup browse/preview/restore state. Never touches vault sessions. */
     private final Map<UUID, BackupBrowseState> backupBrowse = new ConcurrentHashMap<>();
 
@@ -92,6 +116,30 @@ public class GuiManager {
         this.enderchestGui = new EnderchestGui(config);
         this.backupListGui = new BackupListGui(config);
         this.backupPreviewGui = new BackupPreviewGui(config);
+        this.escrowProjection = new EscrowProjection(plugin);
+        this.playerData = new BukkitPlayerDataPort(plugin);
+    }
+
+    public void setCrossServerController(CrossServerMutationController controller, boolean required) {
+        if (crossServer != null) throw new IllegalStateException("cross-server controller already configured");
+        crossServer = controller;
+        crossServerRequired = required;
+    }
+
+    public void setCrossServerRequired(boolean required) {
+        crossServerRequired = required;
+    }
+
+    public void setStorageAccessGate(StorageAccessGate storageGate) {
+        this.storageGate = storageGate;
+    }
+
+    public boolean isStorageMaintenance() { return storageGate.isMaintenance(); }
+
+    public boolean enterStorageMaintenance() { return storageGate.enterMaintenanceIfIdle(); }
+
+    public boolean hasAnyOpenOrTrackedSession() {
+        return !openByPlayer.isEmpty() || !registry.allTracked().isEmpty() || !backupBrowse.isEmpty();
     }
 
     // ── Opening ──────────────────────────────────────────────────────────────
@@ -101,10 +149,11 @@ public class GuiManager {
     }
 
     private void openMainMenuOnMain(Player player) {
+        if (rejectMaintenance(player)) return;
         UUID uuid = player.getUniqueId();
         long request = beginOpenRequest(uuid);
         closeCurrentVaultThenRun(player, false, request, () -> {
-            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            runStorageAsync(() -> {
                 var itemCounts = storage.countPageItems(uuid);
                 runOnMainThread(() -> {
                     if (!isCurrentOpenRequest(uuid, request) || !player.isOnline()) return;
@@ -121,6 +170,7 @@ public class GuiManager {
     }
 
     private void openPageOnMain(Player player, int page) {
+        if (rejectMaintenance(player)) return;
         UUID actorUuid = player.getUniqueId();
         long request = beginOpenRequest(actorUuid);
         closeCurrentVaultThenRun(player, true, request,
@@ -136,6 +186,7 @@ public class GuiManager {
     }
 
     private void openPageAdminOnMain(Player admin, UUID targetUuid, String targetName, int page, boolean readOnly) {
+        if (rejectMaintenance(admin)) return;
         long request = beginOpenRequest(admin.getUniqueId());
         if (readOnly) {
             openPageAdminReadOnly(admin, targetUuid, targetName, page, request);
@@ -175,7 +226,7 @@ public class GuiManager {
                 });
                 return;
             }
-            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            runStorageAsync(() -> {
                 Storage.PageRecord record = storage.loadPageWithRevision(targetUuid, page);
                 runOnMainThread(() -> {
                     if (!isCurrentOpenRequest(actorUuid, request)) return;
@@ -201,14 +252,56 @@ public class GuiManager {
         UUID actorUuid = actor.getUniqueId();
         if (!isCurrentOpenRequest(actorUuid, request)) return;
         String vaultId = String.valueOf(page);
-        OpenAttempt attempt = registry.beginOpen(ownerUuid, actorUuid, vaultId);
+        if (!crossServerRequired) {
+            handleOpenAttempt(actor, ownerUuid, ownerName, page, adminView, request,
+                    registry.beginOpen(ownerUuid, actorUuid, vaultId), null);
+            return;
+        }
+        if (hasLegacyEscrowTag(actor)) {
+            actor.sendMessage(config.msg("cross-server-quarantined"));
+            config.playSound(actor, "denied");
+            return;
+        }
+        CrossServerMutationController controller = crossServer;
+        if (controller == null) {
+            rejectCrossOpen(actor, CrossServerMutationController.OpenResult.UNAVAILABLE);
+            return;
+        }
+        controller.prepareOpen(ownerUuid, actorUuid, page, request, outcome -> {
+            if (!isCurrentOpenRequest(actorUuid, request) || !actor.isOnline()) {
+                if (outcome.sessionId() != null) controller.closeSession(outcome.sessionId());
+                return;
+            }
+            if (outcome.result() != CrossServerMutationController.OpenResult.GRANTED) {
+                rejectCrossOpen(actor, outcome.result());
+                return;
+            }
+            OpenAttempt attempt = registry.beginOpenCrossServer(
+                    ownerUuid, actorUuid, vaultId, outcome.sessionId(), outcome.fence());
+            handleOpenAttempt(actor, ownerUuid, ownerName, page, adminView, request, attempt, outcome.sessionId());
+        });
+    }
+
+    private void handleOpenAttempt(
+            Player actor, UUID ownerUuid, String ownerName, int page, boolean adminView,
+            long request, OpenAttempt attempt, UUID acquiredCrossSession) {
+        String vaultId = String.valueOf(page);
         if (attempt instanceof OpenAttempt.Created created) {
             proceedToLoad(actor, created.session(), ownerName, page, adminView, request);
         } else if (attempt instanceof OpenAttempt.Supersede supersede) {
-            resolveSupersede(actor, supersede.previous(), request,
+            Runnable resolve = () -> resolveSupersede(actor, supersede.previous(), request,
                     () -> beginOpenAndLoad(actor, ownerUuid, ownerName, page, adminView, request));
+            if (acquiredCrossSession != null && crossServer != null) {
+                crossServer.closeSession(acquiredCrossSession, resolve);
+            } else {
+                resolve.run();
+            }
         } else if (attempt instanceof OpenAttempt.Rejected rejected) {
-            txService.fireConcurrentSessionConflict(ownerUuid, actorUuid, vaultId, rejected.existing());
+            if (acquiredCrossSession != null && crossServer != null) {
+                crossServer.closeSession(acquiredCrossSession);
+            }
+            txService.fireConcurrentSessionConflict(
+                    ownerUuid, actor.getUniqueId(), vaultId, rejected.existing());
             actor.sendMessage(config.msg("vault-busy"));
             config.playSound(actor, "denied");
         }
@@ -227,8 +320,14 @@ public class GuiManager {
             case OPENING -> {
                 // Nothing loaded yet, nothing to commit - free the key; the in-flight load's
                 // eventual activate() call will fail and be discarded (see proceedToLoad).
+                CrossServerMutationController controller = crossServer;
                 registry.close(prev.getSessionId());
-                runIfCurrentOpenRequest(actor.getUniqueId(), request, retry);
+                if (prev.isCrossServer() && controller != null) {
+                    controller.closeSession(prev.getSessionId(),
+                            () -> runIfCurrentOpenRequest(actor.getUniqueId(), request, retry));
+                } else {
+                    runIfCurrentOpenRequest(actor.getUniqueId(), request, retry);
+                }
             }
             case ACTIVE -> {
                 OpenSession bukkitSide = openByPlayer.get(actor.getUniqueId());
@@ -258,7 +357,8 @@ public class GuiManager {
                         }
                     }
                     finishReopen(actor, bukkitSide, prev);
-                    runIfCurrentOpenRequest(actor.getUniqueId(), request, retry);
+                    runAfterCrossRelease(prev,
+                            () -> runIfCurrentOpenRequest(actor.getUniqueId(), request, retry));
                 });
             }
             default -> {
@@ -278,12 +378,12 @@ public class GuiManager {
         }
         UUID ownerUuid = session.getOwnerUuid();
         VaultKey key = new VaultKey(ownerUuid, session.getVaultId());
-        Storage.PageRecord cached = cachedPage(key);
+        Storage.PageRecord cached = session.isCrossServer() ? null : cachedPage(key);
         if (cached != null) {
             applyLoadedRecordOnMain(actor, session, ownerName, page, adminView, cached, request);
             return;
         }
-        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+        runStorageAsync(() -> {
             Storage.PageRecord record = storage.loadPageWithRevision(ownerUuid, page);
             applyLoadedRecordOnMain(actor, session, ownerName, page, adminView, record, request);
         });
@@ -292,12 +392,17 @@ public class GuiManager {
     void applyLoadedRecordOnMain(Player actor, VaultSession session, String ownerName, int page,
                                  boolean adminView, Storage.PageRecord record, long request) {
         runOnMainThread(() -> {
-            if (!isCurrentOpenRequest(actor.getUniqueId(), request)) {
+            CrossServerMutationController controller = crossServer;
+            if (!isCurrentOpenRequest(actor.getUniqueId(), request)
+                    || (session.isCrossServer() && (controller == null
+                    || !controller.mayUseView(session.getSessionId(), session.getNetworkFence())))) {
+                if (controller != null && session.isCrossServer()) controller.closeSession(session.getSessionId());
                 registry.close(session.getSessionId());
                 return;
             }
-            applyLoadedRecord(actor, session, ownerName, page, adminView,
-                    cacheLatest(new VaultKey(session.getOwnerUuid(), session.getVaultId()), record));
+            Storage.PageRecord selected = session.isCrossServer() ? record
+                    : cacheLatest(new VaultKey(session.getOwnerUuid(), session.getVaultId()), record);
+            applyLoadedRecord(actor, session, ownerName, page, adminView, selected);
         });
     }
 
@@ -342,6 +447,7 @@ public class GuiManager {
 
     /** Opens the paginated, clickable list of {@code targetUuid}'s stored backups. */
     public void openBackupList(Player admin, UUID targetUuid, String targetName) {
+        if (rejectMaintenance(admin)) return;
         runOnMainThread(() -> openBackupListOnMain(admin, targetUuid, targetName));
     }
 
@@ -350,7 +456,7 @@ public class GuiManager {
         long request = beginOpenRequest(actorUuid);
         closeCurrentVaultThenRun(admin, false, request, () -> {
             clearBackupBrowse(actorUuid);
-            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            runStorageAsync(() -> {
                 List<Storage.BackupRecord> backups = storage.listBackups(targetUuid);
                 runOnMainThread(() -> {
                     if (!isCurrentOpenRequest(actorUuid, request) || !admin.isOnline()) return;
@@ -364,6 +470,7 @@ public class GuiManager {
 
     /** Opens a specific backup's preview directly by id (e.g. `/ecadmin restore <player> <id>`). */
     public void openBackupPreviewDirect(Player admin, UUID targetUuid, String targetName, int backupId) {
+        if (rejectMaintenance(admin)) return;
         runOnMainThread(() -> openBackupPreviewDirectOnMain(admin, targetUuid, targetName, backupId));
     }
 
@@ -372,7 +479,7 @@ public class GuiManager {
         long request = beginOpenRequest(actorUuid);
         closeCurrentVaultThenRun(admin, false, request, () -> {
             clearBackupBrowse(actorUuid);
-            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            runStorageAsync(() -> {
                 Storage.BackupRecord record = storage.getBackup(backupId);
                 ItemStack[] items = (record != null && record.uuid().equals(targetUuid))
                         ? storage.loadBackupItems(backupId) : null;
@@ -449,7 +556,7 @@ public class GuiManager {
     }
 
     private void openBackupPreviewFromList(Player admin, BackupBrowseState state, int backupId) {
-        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+        runStorageAsync(() -> {
             Storage.BackupRecord record = storage.getBackup(backupId);
             ItemStack[] items = record != null ? storage.loadBackupItems(backupId) : null;
             runOnMainThread(() -> {
@@ -507,6 +614,10 @@ public class GuiManager {
     }
 
     private void performRestore(Player admin, BackupBrowseState state) {
+        if (crossServerRequired) {
+            admin.sendMessage(config.msg("cross-server-admin-write-disabled"));
+            return;
+        }
         int backupId = state.previewingBackupId;
         int page = state.previewingPage;
         UUID targetUuid = state.targetUuid;
@@ -523,7 +634,7 @@ public class GuiManager {
         admin.closeInventory();
         clearBackupBrowse(admin.getUniqueId());
 
-        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+        runStorageAsync(() -> {
             storage.savePage(targetUuid, page, items);
             runOnMainThread(() -> {
                 invalidateCache(targetUuid, page);
@@ -635,7 +746,8 @@ public class GuiManager {
                 }
             }
             finishReopen(actor, current, vs);
-            runIfCurrentOpenRequest(actorUuid, request, continuation);
+            runAfterCrossRelease(vs,
+                    () -> runIfCurrentOpenRequest(actorUuid, request, continuation));
         });
     }
 
@@ -649,6 +761,67 @@ public class GuiManager {
         txService.fireClosed(session, CloseReason.REOPEN);
         actor.closeInventory();
         openByPlayer.remove(actor.getUniqueId(), current);
+    }
+
+    private void finishCrossReopen(Player actor, OpenSession current, VaultSession session) {
+        registry.close(session.getSessionId());
+        txService.fireClosed(session, CloseReason.REOPEN);
+        actor.closeInventory();
+        openByPlayer.remove(actor.getUniqueId(), current);
+    }
+
+    private void runAfterCrossRelease(VaultSession session, Runnable continuation) {
+        CrossServerMutationController controller = crossServer;
+        if (session.isCrossServer() && controller != null) controller.closeSession(session.getSessionId(), continuation);
+        else continuation.run();
+    }
+
+    public void markDirtyNextTick(OpenSession session) {
+        VaultSession vault = session == null ? null : session.getVaultSession();
+        if (vault == null || session.isReadOnly() || session.getPage() < 1) return;
+        UUID sessionId = vault.getSessionId();
+        dirtySessions.add(sessionId);
+        if (!dirtyCaptureScheduled.add(sessionId)) return;
+        runNextTick(() -> {
+            dirtyCaptureScheduled.remove(sessionId);
+            flushDirty(session);
+        });
+    }
+
+    private void flushDirty(OpenSession session) {
+        VaultSession vault = session.getVaultSession();
+        if (vault == null || !dirtySessions.contains(vault.getSessionId())) return;
+        if (vault.getState() == SessionState.COMMITTING) {
+            txService.afterCurrentCommit(vault, () -> flushDirty(session));
+            return;
+        }
+        if (vault.getState() != SessionState.ACTIVE) return;
+        if (vault.isCrossServer() && (crossServer == null
+                || !crossServer.mayUseView(vault.getSessionId(), vault.getNetworkFence()))) {
+            dirtySessions.remove(vault.getSessionId());
+            Player actor = plugin.getServer().getPlayer(vault.getActorUuid());
+            if (actor != null) {
+                actor.sendMessage(config.msg("cross-server-unavailable"));
+                actor.closeInventory();
+            }
+            return;
+        }
+        dirtySessions.remove(vault.getSessionId());
+        ItemStack[] current = EnderchestGui.extractContent(session.getInventory());
+        txService.commitIfActive(vault, session.getOriginalSnapshot(), current, outcome -> {
+            applyCommitOutcome(vault, outcome, current);
+            if (outcome == CommitOutcome.COMMITTED || outcome == CommitOutcome.NO_CHANGE) {
+                session.updateOriginalSnapshot(current);
+                if (dirtySessions.contains(vault.getSessionId())) flushDirty(session);
+            } else if (outcome == CommitOutcome.CONFLICT) {
+                Player actor = plugin.getServer().getPlayer(vault.getActorUuid());
+                if (actor != null) {
+                    rollbackRejectedTransfer(actor, session.getOriginalSnapshot(), current);
+                    actor.sendMessage(config.msg("vault-conflict-reverted"));
+                    actor.closeInventory();
+                }
+            }
+        });
     }
 
     // ── Saving ───────────────────────────────────────────────────────────────
@@ -689,6 +862,7 @@ public class GuiManager {
                 openByPlayer.remove(uuid, session);
                 registry.close(vs.getSessionId());
                 txService.fireClosed(vs, CloseReason.CLIENT_CLOSE);
+                runAfterCrossRelease(vs, () -> {});
             }
         });
     }
@@ -699,6 +873,7 @@ public class GuiManager {
      * {@link VaultTransactionService#commitIfActive}.
      */
     public void saveAllDirty() {
+        if (storageGate.isMaintenance()) return;
         for (Map.Entry<UUID, OpenSession> entry : Map.copyOf(openByPlayer).entrySet()) {
             UUID actorUuid = entry.getKey();
             OpenSession s = entry.getValue();
@@ -764,6 +939,7 @@ public class GuiManager {
                 openByPlayer.remove(uuid, s);
                 registry.close(vs.getSessionId());
                 txService.fireClosed(vs, reason);
+                runAfterCrossRelease(vs, () -> {});
             }
         });
     }
@@ -775,6 +951,7 @@ public class GuiManager {
      * database scan.
      */
     public void sweepOrphans() {
+        if (storageGate.isMaintenance()) return;
         for (UUID actorUuid : List.copyOf(openByPlayer.keySet())) {
             if (plugin.getServer().getPlayer(actorUuid) == null) {
                 handleDisconnect(actorUuid, CloseReason.LOGOUT);
@@ -796,6 +973,7 @@ public class GuiManager {
             if (vs != null) {
                 ItemStack[] currentContent = EnderchestGui.extractContent(s.getInventory());
                 txService.commitSynchronously(vs, s.getOriginalSnapshot(), currentContent);
+                runAfterCrossRelease(vs, () -> {});
                 registry.close(vs.getSessionId());
                 txService.fireClosed(vs, reason);
             }
@@ -814,6 +992,514 @@ public class GuiManager {
     }
 
     // ── Queries ──────────────────────────────────────────────────────────────
+
+    public boolean isCrossServer(OpenSession session) {
+        return session != null && session.getVaultSession() != null && session.getVaultSession().isCrossServer();
+    }
+
+    public boolean isCrossServerModeRequired() {
+        return crossServerRequired;
+    }
+
+    private boolean rejectMaintenance(Player player) {
+        if (!storageGate.isMaintenance()) return false;
+        player.sendMessage(config.msg("storage-maintenance"));
+        config.playSound(player, "denied");
+        return true;
+    }
+
+    public boolean crossNavigationAllowed(OpenSession session) {
+        if (!isCrossServer(session) || crossServer == null) return !isCrossServer(session);
+        VaultSession vault = session.getVaultSession();
+        return !crossServer.hasInFlight(vault.getSessionId())
+                && crossServer.mayUseView(vault.getSessionId(), vault.getNetworkFence());
+    }
+
+    public boolean crossMutationPending(OpenSession session) {
+        return isCrossServer(session) && crossServer != null
+                && crossServer.hasInFlight(session.getVaultSession().getSessionId());
+    }
+
+    public CrossInteractionResult submitCrossClick(
+            Player actor, OpenSession session, boolean clickedTop, int slot,
+            InventoryAction reportedAction, ClickType click, int hotbarSlot) {
+        if (!isExactCrossView(actor, session)) return CrossInteractionResult.STALE;
+        CrossServerMutationController controller = crossServer;
+        if (controller == null) return CrossInteractionResult.FROZEN;
+        CursorEscrow escrow = controller.cursorEscrow(session.getVaultSession().getSessionId());
+        ItemStack actualCursor = actor.getItemOnCursor();
+        ItemStack canonicalCursor;
+        if (escrow == null) {
+            if (!empty(actualCursor)) return CrossInteractionResult.STALE;
+            canonicalCursor = null;
+        } else {
+            if (!escrowProjection.matches(actualCursor, escrow)) return CrossInteractionResult.STALE;
+            canonicalCursor = escrowProjection.canonicalItem(escrow);
+        }
+        ItemStack target = clickedTop
+                ? (slot >= 0 && slot < 45 ? session.getInventory().getItem(slot) : null)
+                : (slot >= 0 && slot < actor.getInventory().getSize()
+                ? actor.getInventory().getItem(slot) : null);
+        InventoryAction action = normalizeCrossAction(click, canonicalCursor, target, reportedAction);
+        if (action == null) return CrossInteractionResult.UNSUPPORTED;
+        CrossServerInventoryPlanner.ClickInput input = new CrossServerInventoryPlanner.ClickInput(
+                EnderchestGui.extractContent(session.getInventory()), actor.getInventory().getContents(),
+                canonicalCursor, clickedTop, slot, action, hotbarSlot);
+        CrossServerInventoryPlanner.CursorActionPlan cursorPlan = crossServerPlanner.cursorClick(input).orElse(null);
+        if (cursorPlan == null) {
+            ItemStack source = clickedTop && slot >= 0 && slot < 45
+                    ? session.getInventory().getItem(slot) : null;
+            return !empty(source) && isWithdrawal(action)
+                    ? CrossInteractionResult.NO_SPACE : CrossInteractionResult.UNSUPPORTED;
+        }
+        if (escrow != null || !cursorPlan.cursorAfter().isEmpty()) {
+            return CrossInteractionResult.from(controller.submitCursor(session.getVaultSession(), cursorPlan));
+        }
+        PlannedMutation plan = crossServerPlanner.click(input).orElse(null);
+        return plan == null ? CrossInteractionResult.UNSUPPORTED
+                : CrossInteractionResult.from(controller.submit(session.getVaultSession(), plan));
+    }
+
+    private InventoryAction normalizeCrossAction(ClickType click, ItemStack cursor,
+                                                   ItemStack target, InventoryAction reported) {
+        if (click == ClickType.SHIFT_LEFT || click == ClickType.SHIFT_RIGHT) {
+            return InventoryAction.MOVE_TO_OTHER_INVENTORY;
+        }
+        if (click == ClickType.NUMBER_KEY || click == ClickType.SWAP_OFFHAND) {
+            return InventoryAction.HOTBAR_SWAP;
+        }
+        if (click == ClickType.DOUBLE_CLICK) return InventoryAction.COLLECT_TO_CURSOR;
+        if (click == ClickType.LEFT) {
+            if (empty(cursor)) return InventoryAction.PICKUP_ALL;
+            return empty(target) || cursor.isSimilar(target)
+                    ? InventoryAction.PLACE_ALL : InventoryAction.SWAP_WITH_CURSOR;
+        }
+        if (click == ClickType.RIGHT) {
+            if (empty(cursor)) return InventoryAction.PICKUP_HALF;
+            return empty(target) || cursor.isSimilar(target)
+                    ? InventoryAction.PLACE_ONE : InventoryAction.SWAP_WITH_CURSOR;
+        }
+        return reported == InventoryAction.NOTHING ? null : null;
+    }
+
+    public CrossInteractionResult submitCrossDrag(
+            Player actor, OpenSession session, ItemStack oldCursor, DragType dragType,
+            Set<Integer> topSlots, Set<Integer> playerSlots) {
+        if (!isExactCrossView(actor, session)) return CrossInteractionResult.STALE;
+        CrossServerMutationController controller = crossServer;
+        if (controller == null) return CrossInteractionResult.FROZEN;
+        CursorEscrow escrow = controller.cursorEscrow(session.getVaultSession().getSessionId());
+        if (escrow == null || !escrowProjection.matches(oldCursor, escrow)) {
+            return CrossInteractionResult.STALE;
+        }
+        ItemStack canonical = escrowProjection.canonicalItem(escrow);
+        Map<Integer, ItemStack> canonicalTop = new java.util.LinkedHashMap<>();
+        Map<Integer, ItemStack> canonicalPlayer = new java.util.LinkedHashMap<>();
+        List<DragTarget> targets = new java.util.ArrayList<>();
+        for (int slot : new TreeSet<>(topSlots)) {
+            ItemStack current = session.getInventory().getItem(slot);
+            if (empty(current) || current.isSimilar(canonical)) targets.add(new DragTarget(true, slot, current));
+        }
+        for (int slot : new TreeSet<>(playerSlots)) {
+            ItemStack current = actor.getInventory().getItem(slot);
+            if (empty(current) || current.isSimilar(canonical)) targets.add(new DragTarget(false, slot, current));
+        }
+        if (targets.isEmpty()) return CrossInteractionResult.UNSUPPORTED;
+        int remaining = canonical.getAmount();
+        int even = dragType == DragType.EVEN ? remaining / targets.size() : 1;
+        if (even <= 0) return CrossInteractionResult.UNSUPPORTED;
+        for (DragTarget target : targets) {
+            int before = empty(target.current()) ? 0 : target.current().getAmount();
+            int moved = Math.min(remaining, Math.min(even, canonical.getMaxStackSize() - before));
+            if (moved <= 0) continue;
+            ItemStack after = empty(target.current()) ? canonical.clone() : target.current().clone();
+            after.setAmount(before + moved);
+            (target.top() ? canonicalTop : canonicalPlayer).put(target.slot(), after);
+            remaining -= moved;
+            if (remaining == 0) break;
+        }
+        if (remaining == canonical.getAmount()) return CrossInteractionResult.UNSUPPORTED;
+        ItemStack canonicalRemaining = remaining == 0 ? null : canonical.clone();
+        if (canonicalRemaining != null) canonicalRemaining.setAmount(remaining);
+        CrossServerInventoryPlanner.CursorActionPlan plan = crossServerPlanner.cursorDrag(
+                new CrossServerInventoryPlanner.DragInput(
+                EnderchestGui.extractContent(session.getInventory()), actor.getInventory().getContents(),
+                escrowProjection.canonicalItem(escrow), canonicalRemaining,
+                canonicalTop, canonicalPlayer)).orElse(null);
+        return plan == null ? CrossInteractionResult.UNSUPPORTED
+                : CrossInteractionResult.from(controller.submitCursor(session.getVaultSession(), plan));
+    }
+
+    private record DragTarget(boolean top, int slot, ItemStack current) {}
+
+    public void rejectFrozenCrossView(Player actor, OpenSession session) {
+        if (!isExactCrossView(actor, session)) return;
+        VaultSession vault = session.getVaultSession();
+        openByPlayer.remove(actor.getUniqueId(), session);
+        registry.close(vault.getSessionId());
+        if (crossServer != null) crossServer.closeSession(vault.getSessionId());
+        actor.closeInventory();
+        actor.sendMessage(config.msg("cross-server-unavailable"));
+        config.playSound(actor, "denied");
+    }
+
+    /** InventoryClose fires before NMS removed(); erase only the exact volatile projection. */
+    public void detachCrossCursorBeforeClose(Player actor, Inventory closing) {
+        OpenSession session = openByPlayer.get(actor.getUniqueId());
+        if (session == null || !session.getInventory().equals(closing) || !isCrossServer(session)
+                || crossServer == null) return;
+        VaultSession vault = session.getVaultSession();
+        CursorEscrow escrow = crossServer.cursorEscrow(vault.getSessionId());
+        if (escrow == null) return;
+        if (crossServer.cursorDetached(vault.getSessionId()) && crossCursorEmpty(actor.getItemOnCursor())) {
+            return;
+        }
+        if (!escrowProjection.matches(actor.getItemOnCursor(), escrow)) {
+            crossServer.quarantineCursor(vault.getSessionId());
+            return;
+        }
+        actor.setItemOnCursor(null);
+        actor.updateInventory();
+        if (!crossServer.markCursorDetached(vault.getSessionId(), escrow)) {
+            crossServer.quarantineCursor(vault.getSessionId());
+            return;
+        }
+        MutationPlan settlement;
+        try {
+            settlement = playerData.planEscrowSettlement(actor.getUniqueId(), escrow);
+        } catch (RuntimeException divergence) {
+            crossServer.quarantineCursor(vault.getSessionId());
+            return;
+        }
+        if (settlement == null || crossServer.submitDetachedSettlement(vault, settlement,
+                VaultPayloadCodec.encode(EnderchestGui.extractContent(session.getInventory())))
+                != CrossServerMutationController.SubmitResult.ACCEPTED) {
+            // Full/changed inventory: keep CURSOR_STABLE durable for a later recovery attempt.
+            crossServer.abandonSession(vault.getSessionId());
+        }
+    }
+
+    public void detachCrossCursorBeforeDisconnect(Player actor) {
+        OpenSession session = openByPlayer.get(actor.getUniqueId());
+        if (session != null) detachCrossCursorBeforeClose(actor, session.getInventory());
+    }
+
+    /** Death must not add an escrow item after Paper already calculated its drop list. */
+    public void parkCrossCursorBeforeDeath(Player actor) {
+        OpenSession session = openByPlayer.get(actor.getUniqueId());
+        if (session == null || !isCrossServer(session) || crossServer == null) return;
+        VaultSession vault = session.getVaultSession();
+        CursorEscrow escrow = crossServer.cursorEscrow(vault.getSessionId());
+        if (escrow == null) return;
+        if (!crossServer.cursorDetached(vault.getSessionId())) {
+            if (!escrowProjection.matches(actor.getItemOnCursor(), escrow)) {
+                crossServer.quarantineCursor(vault.getSessionId());
+                return;
+            }
+            actor.setItemOnCursor(null);
+            actor.updateInventory();
+            if (!crossServer.markCursorDetached(vault.getSessionId(), escrow)) {
+                crossServer.quarantineCursor(vault.getSessionId());
+                return;
+            }
+        }
+        crossServer.abandonSession(vault.getSessionId());
+    }
+
+    @Override
+    public CrossServerMutationController.ApplyResult reserve(
+            CrossServerMutationController.ViewIdentity view, PlannedMutation plan) {
+        OpenSession session = exactCrossView(view);
+        if (session == null) return CrossServerMutationController.ApplyResult.STALE_VIEW;
+        if (!plan.vaultBefore().equals(VaultPayloadCodec.encode(
+                EnderchestGui.extractContent(session.getInventory())))) {
+            return CrossServerMutationController.ApplyResult.DIVERGED;
+        }
+        return compareApplyAndSave(view.actorUuid(), plan.playerPlan(), MutationPlan.Phase.BEFORE,
+                MutationPlan.Phase.RESERVED);
+    }
+
+    @Override
+    public CursorEscrow createEscrow(UUID mutationId, long opSequence, SlotValue canonical,
+                                     List<com.valerin.venderchest.crossserver.SlotMutation> fallback) {
+        SlotValue projection = escrowProjection.projectionValue(canonical, mutationId, opSequence);
+        return new CursorEscrow(mutationId, opSequence, canonical, projection, fallback);
+    }
+
+    @Override
+    public CrossServerMutationController.ApplyResult restoreBefore(
+            CrossServerMutationController.ViewIdentity view, PlannedMutation plan) {
+        try {
+            if (!playerData.isOnline(view.actorUuid())) return CrossServerMutationController.ApplyResult.OFFLINE;
+            Map<SlotRef, SlotValue> observed = playerData.snapshot(view.actorUuid(), plan.playerPlan());
+            if (plan.playerPlan().matches(MutationPlan.Phase.BEFORE, observed)) {
+                return CrossServerMutationController.ApplyResult.OK;
+            }
+            if (!plan.playerPlan().matches(MutationPlan.Phase.RESERVED, observed)
+                    || !playerData.compareAndApply(view.actorUuid(), plan.playerPlan(), observed,
+                    MutationPlan.Phase.BEFORE)) {
+                return CrossServerMutationController.ApplyResult.DIVERGED;
+            }
+            playerData.saveData(view.actorUuid());
+            updatePlayerInventory(view.actorUuid());
+            return CrossServerMutationController.ApplyResult.OK;
+        } catch (IllegalStateException offline) {
+            return CrossServerMutationController.ApplyResult.OFFLINE;
+        } catch (Exception failed) {
+            return CrossServerMutationController.ApplyResult.SAVE_FAILED;
+        }
+    }
+
+    private void switchCrossServerPage(Player actor, OpenSession current, int page) {
+        VaultSession previous = current.getVaultSession();
+        if (previous == null || page == current.getPage() || crossServer == null
+                || !crossNavigationAllowed(current)) return;
+        if (!crossCursorEmpty(actor.getItemOnCursor())) {
+            actor.sendMessage(config.msg("cross-server-cursor-not-empty"));
+            config.playSound(actor, "denied");
+            return;
+        }
+        if (registry.current(new VaultKey(previous.getOwnerUuid(), String.valueOf(page))).isPresent()) {
+            actor.sendMessage(config.msg("vault-busy"));
+            return;
+        }
+        long request = beginOpenRequest(actor.getUniqueId());
+        if (!crossServer.rebindView(previous.getSessionId(), page, request)) {
+            rejectFrozenCrossView(actor, current);
+            return;
+        }
+        VaultSession next = registry.switchCrossServerPage(
+                previous.getSessionId(), String.valueOf(page)).orElse(null);
+        if (next == null) {
+            crossServer.rebindView(previous.getSessionId(), current.getPage(), request);
+            actor.sendMessage(config.msg("vault-busy"));
+            return;
+        }
+        openByPlayer.remove(actor.getUniqueId(), current);
+        txService.fireClosed(previous, CloseReason.REOPEN);
+        actor.closeInventory();
+        proceedToLoad(actor, next, current.getTargetName(), page, current.isAdminView(), request);
+    }
+
+    @Override
+    public CrossServerMutationController.ApplyResult applyCommitted(
+            CrossServerMutationController.ViewIdentity view, PlannedMutation plan, long newRevision) {
+        CrossServerMutationController.ApplyResult playerResult = applyCommittedPlayer(view.actorUuid(), plan.playerPlan());
+        if (playerResult != CrossServerMutationController.ApplyResult.OK) return playerResult;
+
+        OpenSession session = exactCrossView(view);
+        if (session == null) return CrossServerMutationController.ApplyResult.OK;
+        if (!plan.vaultBefore().equals(VaultPayloadCodec.encode(
+                EnderchestGui.extractContent(session.getInventory())))) {
+            return CrossServerMutationController.ApplyResult.DIVERGED;
+        }
+        ItemStack[] after = VaultPayloadCodec.decode(plan.vaultAfter());
+        if (after.length != 45) return CrossServerMutationController.ApplyResult.DIVERGED;
+        for (int slot = 0; slot < after.length; slot++) {
+            session.getInventory().setItem(slot, after[slot] == null ? null : after[slot].clone());
+        }
+        if (!plan.vaultBefore().equals(plan.vaultAfter())) {
+            if (!registry.advanceNetworkRevision(view.sessionId(), newRevision - 1, newRevision)) {
+                return CrossServerMutationController.ApplyResult.DIVERGED;
+            }
+            session.updateOriginalSnapshot(cloneArray(after));
+        }
+        if (plan.playerPlan().isCursorStable()) {
+            Player actor = plugin.getServer().getPlayer(view.actorUuid());
+            if (actor == null || !crossCursorEmpty(actor.getItemOnCursor())) {
+                return CrossServerMutationController.ApplyResult.DIVERGED;
+            }
+            actor.setItemOnCursor(escrowProjection.project(plan.playerPlan().escrow().canonical(),
+                    plan.playerPlan().escrow().escrowId(), plan.playerPlan().escrow().opSequence()));
+        }
+        updatePlayerInventory(view.actorUuid());
+        return CrossServerMutationController.ApplyResult.OK;
+    }
+
+    @Override
+    public CrossServerMutationController.ApplyResult applySettlementPlayer(
+            CrossServerMutationController.ViewIdentity view, MutationPlan plan) {
+        OpenSession session = exactCrossView(view);
+        Player actor = plugin.getServer().getPlayer(view.actorUuid());
+        boolean detachedFallback = plan.settlement().kind() == com.valerin.venderchest.crossserver.CursorSettlement.Kind.FALLBACK;
+        if (session == null || actor == null || (detachedFallback
+                ? !crossCursorEmpty(actor.getItemOnCursor())
+                : !escrowProjection.matches(actor.getItemOnCursor(), plan.escrow()))) {
+            return CrossServerMutationController.ApplyResult.STALE_VIEW;
+        }
+        return compareApplyAndSave(view.actorUuid(), plan, MutationPlan.Phase.BEFORE,
+                MutationPlan.Phase.AFTER);
+    }
+
+    @Override
+    public CrossServerMutationController.ApplyResult applySettlementCommitted(
+            CrossServerMutationController.ViewIdentity view, PlannedMutation committed, long newRevision) {
+        MutationPlan plan = committed.playerPlan();
+        OpenSession session = exactCrossView(view);
+        if (session == null) return CrossServerMutationController.ApplyResult.OK;
+        Player actor = plugin.getServer().getPlayer(view.actorUuid());
+        boolean detachedFallback = plan.settlement().kind() == com.valerin.venderchest.crossserver.CursorSettlement.Kind.FALLBACK;
+        if (actor == null || (detachedFallback ? !crossCursorEmpty(actor.getItemOnCursor())
+                : !escrowProjection.matches(actor.getItemOnCursor(), plan.escrow()))
+                || !committed.vaultBefore().equals(VaultPayloadCodec.encode(
+                EnderchestGui.extractContent(session.getInventory())))) {
+            return CrossServerMutationController.ApplyResult.DIVERGED;
+        }
+        if (!committed.vaultBefore().equals(committed.vaultAfter())) {
+            ItemStack[] after = VaultPayloadCodec.decode(committed.vaultAfter());
+            if (after.length != 45) return CrossServerMutationController.ApplyResult.DIVERGED;
+            for (int slot = 0; slot < after.length; slot++) {
+                session.getInventory().setItem(slot, after[slot] == null ? null : after[slot].clone());
+            }
+            if (!registry.advanceNetworkRevision(view.sessionId(), newRevision - 1, newRevision)) {
+                return CrossServerMutationController.ApplyResult.DIVERGED;
+            }
+            session.updateOriginalSnapshot(cloneArray(after));
+        }
+        CursorEscrow next = plan.settlement().nextEscrow();
+        actor.setItemOnCursor(next == null ? null : escrowProjection.project(
+                next.canonical(), next.escrowId(), next.opSequence()));
+        actor.updateInventory();
+        return CrossServerMutationController.ApplyResult.OK;
+    }
+
+    @Override
+    public void failClosed(CrossServerMutationController.ViewIdentity view,
+                           CrossServerMutationController.Failure failure) {
+        OpenSession session = exactCrossView(view);
+        registry.close(view.sessionId());
+        if (session == null) return;
+        openByPlayer.remove(view.actorUuid(), session);
+        Player actor = plugin.getServer().getPlayer(view.actorUuid());
+        if (actor != null) {
+            actor.closeInventory();
+            actor.sendMessage(config.msg("cross-server-failed"));
+            config.playSound(actor, "denied");
+        }
+    }
+
+    private CrossServerMutationController.ApplyResult compareApplyAndSave(
+            UUID actorUuid, MutationPlan plan, MutationPlan.Phase expected, MutationPlan.Phase target) {
+        try {
+            if (!playerData.isOnline(actorUuid)) return CrossServerMutationController.ApplyResult.OFFLINE;
+            if (plan.playerSlots().isEmpty()) return CrossServerMutationController.ApplyResult.OK;
+            Map<SlotRef, SlotValue> observed = playerData.snapshot(actorUuid, plan);
+            if (!plan.matches(expected, observed)
+                    || !playerData.compareAndApply(actorUuid, plan, observed, target)) {
+                return CrossServerMutationController.ApplyResult.DIVERGED;
+            }
+            playerData.saveData(actorUuid);
+            updatePlayerInventory(actorUuid);
+            return CrossServerMutationController.ApplyResult.OK;
+        } catch (IllegalStateException offline) {
+            return CrossServerMutationController.ApplyResult.OFFLINE;
+        } catch (Exception failed) {
+            return CrossServerMutationController.ApplyResult.SAVE_FAILED;
+        }
+    }
+
+    private CrossServerMutationController.ApplyResult applyCommittedPlayer(UUID actorUuid, MutationPlan plan) {
+        try {
+            if (!playerData.isOnline(actorUuid)) return CrossServerMutationController.ApplyResult.OFFLINE;
+            if (plan.playerSlots().isEmpty()) return CrossServerMutationController.ApplyResult.OK;
+            Map<SlotRef, SlotValue> observed = playerData.snapshot(actorUuid, plan);
+            if (plan.matches(MutationPlan.Phase.AFTER, observed)) {
+                return CrossServerMutationController.ApplyResult.OK;
+            }
+            if ((!plan.matches(MutationPlan.Phase.BEFORE, observed)
+                    && !plan.matches(MutationPlan.Phase.RESERVED, observed))
+                    || !playerData.compareAndApply(actorUuid, plan, observed, MutationPlan.Phase.AFTER)) {
+                return CrossServerMutationController.ApplyResult.DIVERGED;
+            }
+            playerData.saveData(actorUuid);
+            updatePlayerInventory(actorUuid);
+            return CrossServerMutationController.ApplyResult.OK;
+        } catch (IllegalStateException offline) {
+            return CrossServerMutationController.ApplyResult.OFFLINE;
+        } catch (Exception failed) {
+            return CrossServerMutationController.ApplyResult.SAVE_FAILED;
+        }
+    }
+
+    private void updatePlayerInventory(UUID actorUuid) {
+        Player actor = plugin.getServer().getPlayer(actorUuid);
+        if (actor != null) actor.updateInventory();
+    }
+
+    private boolean isExactCrossView(Player actor, OpenSession session) {
+        VaultSession vault = session == null ? null : session.getVaultSession();
+        return vault != null && vault.isCrossServer() && crossServer != null
+                && openByPlayer.get(actor.getUniqueId()) == session
+                && actor.getOpenInventory().getTopInventory().equals(session.getInventory())
+                && registry.isActive(vault.getSessionId(), session.getInventory())
+                && crossServer.mayUseView(vault.getSessionId(), vault.getNetworkFence());
+    }
+
+    private OpenSession exactCrossView(CrossServerMutationController.ViewIdentity view) {
+        OpenSession session = openByPlayer.get(view.actorUuid());
+        if (session == null || session.getPage() != view.page()
+                || !isCurrentOpenRequest(view.actorUuid(), view.actorRequest())) return null;
+        VaultSession vault = session.getVaultSession();
+        if (vault == null || !vault.getSessionId().equals(view.sessionId())
+                || !vault.getOwnerUuid().equals(view.ownerUuid())
+                || !vault.getActorUuid().equals(view.actorUuid())
+                || vault.getNetworkFence() != view.fence()) return null;
+        Player actor = plugin.getServer().getPlayer(view.actorUuid());
+        return actor != null && actor.isOnline()
+                && actor.getOpenInventory().getTopInventory().equals(session.getInventory())
+                && registry.isActive(view.sessionId(), session.getInventory()) ? session : null;
+    }
+
+    private void rejectCrossOpen(Player actor, CrossServerMutationController.OpenResult result) {
+        String key = switch (result) {
+            case BUSY -> "vault-busy";
+            case RECOVERY_PENDING -> "cross-server-recovery-pending";
+            case QUARANTINED -> "cross-server-quarantined";
+            default -> "cross-server-unavailable";
+        };
+        actor.sendMessage(config.msg(key));
+        config.playSound(actor, "denied");
+    }
+
+    private boolean hasLegacyEscrowTag(Player actor) {
+        try {
+            if (escrowProjection.tag(actor.getItemOnCursor()).isPresent()) return true;
+            for (ItemStack item : actor.getInventory().getContents()) {
+                if (escrowProjection.tag(item).isPresent()) return true;
+            }
+            return false;
+        } catch (RuntimeException malformedTag) {
+            return true;
+        }
+    }
+
+    private static boolean isWithdrawal(InventoryAction action) {
+        return action == InventoryAction.PICKUP_ALL
+                || action == InventoryAction.PICKUP_HALF
+                || action == InventoryAction.PICKUP_ONE
+                || action == InventoryAction.PICKUP_SOME
+                || action == InventoryAction.MOVE_TO_OTHER_INVENTORY;
+    }
+
+    private static boolean empty(ItemStack item) {
+        return item == null || item.getType().isAir() || item.getAmount() <= 0;
+    }
+
+    static boolean crossCursorEmpty(ItemStack item) {
+        return item == null || crossCursorEmpty(item.getType().isAir(), item.getAmount());
+    }
+
+    static boolean crossCursorEmpty(boolean air, int amount) {
+        return air || amount <= 0;
+    }
+
+    public enum CrossInteractionResult {
+        ACCEPTED, BUSY, FROZEN, STALE, NO_SPACE, UNSUPPORTED;
+
+        private static CrossInteractionResult from(CrossServerMutationController.SubmitResult result) {
+            return valueOf(result.name());
+        }
+    }
 
     public boolean isOurInventory(Inventory inv) {
         return openByPlayer.values().stream().anyMatch(s -> s.getInventory().equals(inv));
@@ -950,6 +1636,22 @@ public class GuiManager {
         cursor.setAmount(cursor.getAmount() - removed);
         player.setItemOnCursor(cursor.getAmount() == 0 ? null : cursor);
         return amount - removed;
+    }
+
+    private void runStorageAsync(Runnable task) {
+        if (!storageGate.tryBegin()) return;
+        try {
+            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+                try {
+                    task.run();
+                } finally {
+                    storageGate.end();
+                }
+            });
+        } catch (RuntimeException error) {
+            storageGate.end();
+            throw error;
+        }
     }
 
     void runOnMainThread(Runnable task) {

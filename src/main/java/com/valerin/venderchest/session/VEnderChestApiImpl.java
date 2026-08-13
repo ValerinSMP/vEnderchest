@@ -7,6 +7,7 @@ import com.valerin.venderchest.api.VaultSessionView;
 import com.valerin.venderchest.api.VaultSlot;
 import com.valerin.venderchest.api.VaultSnapshot;
 import com.valerin.venderchest.storage.Storage;
+import com.valerin.venderchest.storage.StorageAccessGate;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.ArrayList;
@@ -23,10 +24,17 @@ public final class VEnderChestApiImpl implements VEnderChestApi {
 
     private final VaultSessionRegistry registry;
     private final Storage storage;
+    private final StorageAccessGate storageGate;
 
     public VEnderChestApiImpl(VaultSessionRegistry registry, Storage storage) {
+        this(registry, storage, new StorageAccessGate());
+    }
+
+    public VEnderChestApiImpl(
+            VaultSessionRegistry registry, Storage storage, StorageAccessGate storageGate) {
         this.registry = registry;
         this.storage = storage;
+        this.storageGate = storageGate;
     }
 
     @Override
@@ -44,6 +52,15 @@ public final class VEnderChestApiImpl implements VEnderChestApi {
 
     @Override
     public Optional<VaultSnapshot> snapshot(UUID ownerUuid, String vaultId) {
+        if (!storageGate.tryBegin()) return Optional.empty();
+        try {
+            return snapshotWhileAvailable(ownerUuid, vaultId);
+        } finally {
+            storageGate.end();
+        }
+    }
+
+    private Optional<VaultSnapshot> snapshotWhileAvailable(UUID ownerUuid, String vaultId) {
         int page;
         try {
             page = Integer.parseInt(vaultId);

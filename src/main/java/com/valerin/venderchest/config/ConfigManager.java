@@ -26,6 +26,9 @@ import java.util.Set;
 
 public class ConfigManager {
 
+    private static final String LEGACY_DEFAULT_PREFIX =
+            "<dark_gray>[</dark_gray><primary>ᴇɴᴅᴇʀᴄʜᴇѕᴛ</primary><dark_gray>]</dark_gray> ";
+
     private final VEnderchest plugin;
     private final MiniMessage mm = MiniMessage.miniMessage();
 
@@ -105,7 +108,14 @@ public class ConfigManager {
         YamlConfiguration current = new YamlConfiguration();
         current.options().parseComments(true);
         current.load(file);
-        if (mergeMissing(current, defaults)) current.save(file);
+        boolean changed = false;
+        if ("messages.yml".equals(file.getName())
+                && LEGACY_DEFAULT_PREFIX.equals(current.getString("style.prefix"))) {
+            current.set("style.prefix", defaults.getString("style.prefix"));
+            changed = true;
+        }
+        if (mergeMissing(current, defaults)) changed = true;
+        if (changed) current.save(file);
         return current;
     }
 
@@ -137,6 +147,19 @@ public class ConfigManager {
 
     public String getDbType() {
         return config.getString("database.type", "sqlite");
+    }
+
+    public String getTablePrefix() {
+        String prefix = config.getString("database.table-prefix", "ec_");
+        return prefix != null && prefix.matches("[A-Za-z0-9_]+") ? prefix : "ec_";
+    }
+
+    public CrossServerSettings.Validation crossServerCandidate() {
+        return CrossServerSettings.parse(config);
+    }
+
+    public boolean isCrossServerRequested() {
+        return config.getBoolean("cross-server.enabled", false);
     }
 
     public String getSqliteFile() {

@@ -22,9 +22,19 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GuiManagerMainThreadTest {
+
+    @Test
+    void crossServerOpenRequiresAnEmptyCursor() {
+        assertTrue(GuiManager.crossCursorEmpty(null));
+        assertTrue(GuiManager.crossCursorEmpty(true, 1));
+        assertTrue(GuiManager.crossCursorEmpty(false, 0));
+        assertFalse(GuiManager.crossCursorEmpty(false, 1));
+    }
 
     @Test
     void cacheHitOffMainDefersBukkitAccessExactlyOnce() {
